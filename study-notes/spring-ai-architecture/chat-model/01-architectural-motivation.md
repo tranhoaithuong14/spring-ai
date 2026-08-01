@@ -151,8 +151,6 @@ Tài liệu `ChatModel` diễn đạt mục tiêu cụ thể hơn:
 
 Xem [`chatmodel.adoc`, dòng 8–12](../../../spring-ai-docs/src/main/antora/modules/ROOT/pages/api/chatmodel.adoc).
 
-Đây chưa phải một PRD hoàn chỉnh. Nhưng từ mục tiêu này và source code hiện tại, ta có thể tái dựng các architectural requirements.
-
 </details>
 
 ---

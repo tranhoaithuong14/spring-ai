@@ -1025,6 +1025,7 @@ classDiagram
     class ChatModel {
         <<interface>>
         +call(Prompt prompt) ChatResponse
+        +stream(Prompt prompt) Flux~ChatResponse~
     }
     class ChatResponse
     class Generation
@@ -1043,8 +1044,10 @@ classDiagram
 Class diagram trên mô tả **cấu trúc object model**, không mô tả thứ tự các method
 được thực thi. Ta nên đọc nó từ trái sang phải như sau:
 
-1. Application tạo một `Prompt` rồi truyền nó vào `ChatModel.call(prompt)`.
-2. `ChatModel` trả về một `ChatResponse`.
+1. Application tạo một `Prompt` rồi truyền nó vào `ChatModel.call(prompt)` hoặc
+   `ChatModel.stream(prompt)`.
+2. Với `call`, `ChatModel` trả về một `ChatResponse`; với `stream`, nó trả về
+   `Flux<ChatResponse>`.
 3. Một `ChatResponse` chứa từ `0` đến nhiều `Generation` và đúng một
    `ChatResponseMetadata`.
 4. Mỗi `Generation` chứa một `AssistantMessage` làm output.
@@ -1053,8 +1056,8 @@ Class diagram trên mô tả **cấu trúc object model**, không mô tả thứ
 
 | Quan hệ trong sơ đồ | Cách đọc | Ý nghĩa trong Spring AI |
 |---|---|---|
-| `ChatModel ..> Prompt : accepts` | `ChatModel` phụ thuộc vào `Prompt` | Method `call(Prompt prompt)` nhận `Prompt` làm input |
-| `ChatModel ..> ChatResponse : returns` | `ChatModel` phụ thuộc vào `ChatResponse` | Method `call(...)` dùng `ChatResponse` làm return type |
+| `ChatModel ..> Prompt : accepts` | `ChatModel` phụ thuộc vào `Prompt` | Cả `call(Prompt)` và `stream(Prompt)` đều nhận `Prompt` làm input |
+| `ChatModel ..> ChatResponse : returns` | `ChatModel` phụ thuộc vào `ChatResponse` | `call(...)` trả về một `ChatResponse`; `stream(...)` phát các `ChatResponse` qua `Flux` |
 | `ChatResponse o-- "0..*" Generation` | `ChatResponse` tập hợp nhiều `Generation` | Provider có thể trả về không có candidate hoặc nhiều candidate; `getResults()` trả về toàn bộ danh sách |
 | `ChatResponse o-- "1" ChatResponseMetadata` | Mỗi response giữ một metadata object | Metadata mô tả toàn bộ provider call, chẳng hạn model, token usage và rate limit |
 | `Generation o-- "1" AssistantMessage` | Mỗi candidate giữ một output message | `Generation.getOutput()` trả về `AssistantMessage` chứa text, media hoặc tool calls |
@@ -1293,12 +1296,41 @@ classDiagram
     class ChatModel {
         <<interface>>
         +call(Prompt prompt) ChatResponse
+        +stream(Prompt prompt) Flux~ChatResponse~
     }
 
     Model <|-- ChatModel : specializes
     StreamingModel <|-- StreamingChatModel : specializes
     StreamingChatModel <|-- ChatModel : extends
 ```
+
+Điểm dễ bỏ sót trong sơ đồ này là `stream(Prompt)` xuất hiện ở cả
+`StreamingChatModel` và `ChatModel`. Đây không chỉ là việc UML lặp lại một method
+được kế thừa; source code thực sự khai báo method ở cả hai interface:
+
+```java
+// StreamingChatModel
+Flux<ChatResponse> stream(Prompt prompt);
+
+// ChatModel
+default Flux<ChatResponse> stream(Prompt prompt) {
+    throw new UnsupportedOperationException("streaming is not supported");
+}
+```
+
+Hai declaration có cùng signature nhưng khác vai trò:
+
+- `StreamingChatModel.stream(Prompt)` là contract streaming abstract.
+- `ChatModel.stream(Prompt)` cung cấp default implementation “không hỗ trợ”. Nhờ
+  đó một `ChatModel` chỉ hỗ trợ synchronous call vẫn có thể tồn tại mà không bắt
+  buộc phải viết một streaming implementation giả.
+- Provider có streaming thật sẽ override default method này và trả về
+  `Flux<ChatResponse>` thực sự.
+
+Vì vậy, `ChatModel extends StreamingChatModel` có nghĩa object luôn **có method
+`stream` ở mức type system**; nó không bảo đảm mọi implementation đều **có
+capability streaming ở runtime**. Nếu implementation không override, lời gọi sẽ
+nhận `UnsupportedOperationException`.
 
 Đây là lý do tài liệu nói Generic Model API được tạo để làm nền tảng cho mọi AI model và để provider mới tuân theo một pattern chung tại [`generic-model.adoc`, dòng 4–6](../../../spring-ai-docs/src/main/antora/modules/ROOT/pages/api/generic-model.adoc).
 

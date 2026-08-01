@@ -1508,15 +1508,711 @@ Kết luận cô đọng:
 <details>
 <summary><strong>Câu hỏi thảo luận</strong></summary>
 
-1. Vì sao `Model<Prompt, EmbeddingResponse>` vẫn có thể compile, và điều đó nói gì
-   về giới hạn của generic bounds?
-2. Tại sao `ChatResponse` cần chứa `List<Generation>` thay vì trả thẳng một
-   `AssistantMessage`?
-3. Một metadata field nên nằm ở response level hay result level dựa trên tiêu
-   chí nào?
-4. Việc `ChatModel.stream` mặc định ném `UnsupportedOperationException` đem lại
-   lợi ích gì và tạo rủi ro substitutability gì?
-5. Vì sao application thường nên inject `ChatModel` thay vì `Model<?, ?>`?
-6. Generic Model API đang tái sử dụng behavior hay chỉ tái sử dụng type shape?
+## 1. Vì sao `Model<Prompt, EmbeddingResponse>` vẫn compile?
+
+### Trả lời ngắn
+
+Vì hai generic bounds của `Model` được kiểm tra **độc lập**:
+
+```java
+public interface Model<
+        TReq extends ModelRequest<?>,
+        TRes extends ModelResponse<?>> {
+
+    TRes call(TReq request);
+}
+```
+
+Compiler chỉ hỏi:
+
+1. `Prompt` có phải subtype của `ModelRequest<?>` không? Có.
+2. `EmbeddingResponse` có phải subtype của `ModelResponse<?>` không? Có.
+
+Không có constraint nào trong declaration nói:
+
+```text
+Nếu request là Prompt thì response bắt buộc phải là ChatResponse.
+```
+
+Vì vậy declaration sau hợp lệ về Java type system:
+
+```java
+import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.embedding.EmbeddingResponse;
+import org.springframework.ai.model.Model;
+
+interface StructurallyValidButSemanticallyWrong
+        extends Model<Prompt, EmbeddingResponse> {
+
+    @Override
+    EmbeddingResponse call(Prompt prompt);
+}
+```
+
+### Compiler đã bảo vệ được gì?
+
+Compiler bảo vệ **structural categories**:
+
+- Request phải có shape của `ModelRequest`.
+- Response phải có shape của `ModelResponse`.
+- Method phải nhận đúng `Prompt` và trả đúng `EmbeddingResponse` như interface đã
+  chọn.
+
+Ví dụ implementation không thể trả `ChatResponse` nếu method đã hứa trả
+`EmbeddingResponse`.
+
+### Compiler chưa bảo vệ được gì?
+
+Compiler không hiểu domain rule:
+
+```text
+Prompt thuộc chat domain
+EmbeddingResponse thuộc embedding domain
+Hai type này không tạo thành một operation có ý nghĩa.
+```
+
+Java generics chỉ biết inheritance relationships đã được khai báo. Nó không tự
+suy ra semantic pairing dựa trên tên package hoặc tên class.
+
+Ta có thể hình dung hai bounds như hai cổng kiểm tra riêng:
+
+```mermaid
+flowchart LR
+    prompt[Prompt] --> requestCheck{"extends<br/>ModelRequest&lt;?&gt;?"}
+    embedding[EmbeddingResponse] --> responseCheck{"extends<br/>ModelResponse&lt;?&gt;?"}
+    requestCheck -->|Có| valid[Generic declaration hợp lệ]
+    responseCheck -->|Có| valid
+```
+
+Không có mũi tên kiểm tra compatibility giữa `Prompt` và `EmbeddingResponse`.
+
+### `ChatModel` giải quyết giới hạn này như thế nào?
+
+[`ChatModel`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/model/ChatModel.java)
+khóa cặp type có ý nghĩa:
+
+```java
+public interface ChatModel
+        extends Model<Prompt, ChatResponse>, StreamingChatModel {
+}
+```
+
+Application phụ thuộc `ChatModel` sẽ luôn thấy:
+
+```java
+ChatResponse call(Prompt prompt);
+```
+
+Specialized interface biến một domain rule thành một type contract cụ thể.
+
+### Điều câu hỏi này dạy về generic bounds
+
+Bounded generics rất tốt để giới hạn **họ type hợp lệ**, nhưng không nhất thiết
+biểu diễn được mọi quan hệ semantic giữa các type parameters.
+
+Kết luận:
+
+> Generic Model API bảo đảm request/response có đúng structural grammar; specialized API như `ChatModel` mới bảo đảm cặp request/response đúng domain semantic.
+
+---
+
+## 2. Vì sao `ChatResponse` chứa `List<Generation>` thay vì trả thẳng `AssistantMessage`?
+
+### Trả lời ngắn
+
+Vì một model invocation có thể tạo từ không có kết quả đến nhiều candidate, và
+mỗi candidate cần output cùng metadata riêng. `AssistantMessage` chỉ là output
+của **một** candidate; nó không đại diện cho toàn provider response.
+
+Source của
+[`ChatResponse`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/model/ChatResponse.java)
+giữ:
+
+```java
+private final List<Generation> generations;
+private final ChatResponseMetadata chatResponseMetadata;
+```
+
+Trong khi
+[`Generation`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/model/Generation.java)
+giữ:
+
+```java
+private final AssistantMessage assistantMessage;
+private ChatGenerationMetadata chatGenerationMetadata;
+```
+
+Object graph là:
+
+```mermaid
+classDiagram
+    direction LR
+
+    class ChatResponse
+    class ChatResponseMetadata
+    class Generation
+    class AssistantMessage
+    class ChatGenerationMetadata
+
+    ChatResponse o-- "0..*" Generation : results
+    ChatResponse --> "1" ChatResponseMetadata : response metadata
+    Generation --> "1" AssistantMessage : output
+    Generation --> "1" ChatGenerationMetadata : result metadata
+```
+
+### Lý do 1: provider có thể trả nhiều candidates
+
+Một request có thể yêu cầu hoặc nhận nhiều generated alternatives. Nếu
+`ChatModel.call` trả thẳng `AssistantMessage`, API phải:
+
+- Bỏ các candidates còn lại.
+- Tự ý chọn một candidate mà caller không biết.
+- Hoặc đổi return type thành `List<AssistantMessage>`.
+
+`List<Generation>` bảo toàn cardinality và thứ tự của results. Caller có thể
+chọn candidate đầu tiên hoặc tự áp dụng selection policy.
+
+### Lý do 2: một candidate không chỉ có output
+
+Mỗi candidate có ít nhất hai nhóm thông tin:
+
+```text
+Generation
+  ├── AssistantMessage         nội dung model sinh ra
+  └── ChatGenerationMetadata   model dừng vì sao, content filter nào áp dụng
+```
+
+Nếu response chỉ chứa `List<AssistantMessage>`, finish reason riêng của từng
+candidate không có vị trí tự nhiên.
+
+### Lý do 3: metadata toàn call không thuộc candidate nào
+
+Token usage, response ID, model ID và rate-limit information thường mô tả toàn
+provider invocation:
+
+```text
+ChatResponseMetadata
+```
+
+Nếu trả thẳng `AssistantMessage`, ta phải:
+
+- Vứt bỏ response metadata.
+- Nhét metadata toàn call vào một message bất kỳ.
+- Hoặc tạo một wrapper khác—mà wrapper đó cuối cùng lại chính là vai trò của
+  `ChatResponse`.
+
+### Lý do 4: zero-result state cần được biểu diễn
+
+`ChatResponse.getResult()` trả candidate đầu tiên hoặc `null` nếu danh sách rỗng.
+Điều này cho phép canonical model biểu diễn provider response không có candidate
+mà không phải tạo một `AssistantMessage` giả.
+
+### `getResult()` dùng để làm gì?
+
+Spring AI vẫn cung cấp convenience access:
+
+```java
+Generation first = response.getResult();
+```
+
+Nó giúp use case phổ biến không phải viết:
+
+```java
+Generation first = response.getResults().get(0);
+```
+
+Nhưng `getResult()` không thay đổi sự thật rằng full response có cardinality
+`0..*`.
+
+### So sánh hai thiết kế
+
+| Thiết kế | Giữ nhiều candidate | Giữ metadata từng candidate | Giữ metadata toàn call |
+|---|---:|---:|---:|
+| Trả `AssistantMessage` | Không | Không có vị trí riêng | Không có vị trí riêng |
+| Trả `List<AssistantMessage>` | Có | Không có vị trí riêng | Không có vị trí riêng |
+| Trả `ChatResponse` | Có | Có, qua `Generation` | Có, qua `ChatResponseMetadata` |
+
+Kết luận:
+
+> `AssistantMessage` trả lời “candidate này sinh nội dung gì?”, còn `ChatResponse` trả lời “toàn bộ model invocation đã trả những candidates và metadata nào?”.
+
+---
+
+## 3. Metadata field nên nằm ở response level hay result level?
+
+### Tiêu chí chính: phạm vi áp dụng
+
+Đặt field ở object nhỏ nhất mà field đó áp dụng đầy đủ và tự nhiên:
+
+- Nếu field mô tả **toàn invocation**, đặt ở response level.
+- Nếu field có thể khác nhau giữa các candidates/results, đặt ở result level.
+
+### Bốn câu hỏi để quyết định
+
+#### 1. Nếu có N results, field có cùng một giá trị cho tất cả không?
+
+Nếu có, nó thường thuộc response level.
+
+Ví dụ:
+
+- Provider response ID.
+- Model ID xử lý request.
+- Tổng token usage.
+- Rate-limit state của API call.
+
+#### 2. Field có thể khác giữa candidate thứ nhất và candidate thứ hai không?
+
+Nếu có, nó thuộc result level.
+
+Ví dụ:
+
+- Finish reason.
+- Content filters.
+- Candidate index hoặc provider metadata riêng của candidate.
+
+#### 3. Field được tạo một lần cho request hay được tạo trong lúc map từng result?
+
+Đây là dấu hiệu về ownership:
+
+- Usage thường được đọc một lần từ native response → response metadata.
+- Finish reason thường được đọc từ từng native choice → generation metadata.
+
+#### 4. Caller sẽ hỏi field đó từ ngữ cảnh nào?
+
+So sánh:
+
+```text
+“Call này dùng bao nhiêu token?”          → response metadata
+“Candidate này dừng vì lý do gì?”         → result metadata
+```
+
+### Bảng áp dụng cho chat
+
+| Field | Level phù hợp | Lý do |
+|---|---|---|
+| Response ID | Response | Nhận diện toàn native response |
+| Model ID | Response | Provider dùng model cho toàn request |
+| Total token usage | Response | Tổng chi phí/tài nguyên của call |
+| Rate limit | Response | Trạng thái API quota sau call |
+| Finish reason | Result | Mỗi candidate có thể kết thúc khác nhau |
+| Content filter | Result | Có thể chỉ áp dụng cho một candidate |
+| Candidate index | Result | Nhận diện vị trí của candidate trong results |
+
+### Tool call thuộc metadata level nào?
+
+Tool call thường không chỉ là metadata. Nó là một phần của generated output và
+được đặt trong `AssistantMessage`:
+
+```text
+Generation
+  ├── AssistantMessage
+  │     └── tool calls
+  └── ChatGenerationMetadata
+        └── finish reason / filters
+```
+
+Tiêu chí ở đây là semantic: tool call là điều model yêu cầu application thực
+hiện, nên nó thuộc content/output contract chứ không chỉ là thông tin mô tả output.
+
+### Provider-specific field thì sao?
+
+Trước tiên vẫn chọn đúng scope:
+
+- Native field mô tả toàn response → response metadata extension.
+- Native field mô tả một choice → generation metadata extension.
+
+Sau đó mới quyết định nó đủ phổ quát để thành typed field hay nên đi qua
+key-value metadata.
+
+Không nên giải quyết sự không chắc chắn bằng cách copy cùng field vào cả hai cấp,
+vì sẽ tạo hai nguồn sự thật có thể mâu thuẫn.
+
+Kết luận:
+
+> Response metadata mô tả exchange; result metadata mô tả một generated alternative. Scope và cardinality quyết định ownership của field.
+
+---
+
+## 4. Default `ChatModel.stream` đem lại lợi ích và rủi ro gì?
+
+Source hiện tại:
+
+```java
+default Flux<ChatResponse> stream(Prompt prompt) {
+    throw new UnsupportedOperationException("streaming is not supported");
+}
+```
+
+Trong khi
+[`StreamingChatModel`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/model/StreamingChatModel.java)
+khai báo:
+
+```java
+Flux<ChatResponse> stream(Prompt prompt);
+```
+
+### Lợi ích 1: implementation chỉ hỗ trợ sync vẫn tạo được `ChatModel`
+
+Nếu `ChatModel` không cung cấp default `stream`, mọi implementation sẽ phải viết
+streaming method, kể cả khi provider hoặc fake model chỉ hỗ trợ blocking call.
+
+Default unsupported cho phép implementation tối thiểu chỉ viết:
+
+```java
+ChatResponse call(Prompt prompt);
+```
+
+Đây cũng là lý do test có thể tạo fake bằng lambda:
+
+```java
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
+
+ChatResponse fixedResponse = createFixedResponse();
+ChatModel fake = prompt -> fixedResponse;
+```
+
+### Lợi ích 2: một bean type chung cho sync và streaming
+
+Application và `ChatClient` có thể giữ một `ChatModel` reference cho cả hai API
+shapes. Provider có streaming thật—như các implementation OpenAI, Anthropic hoặc
+Google—override `stream(Prompt)`.
+
+Điều này làm public API gọn và wiring đơn giản hơn.
+
+### Lợi ích 3: evolution compatibility
+
+Về mặt thiết kế interface, thêm một abstract method vào interface buộc tất cả
+implementations hiện hữu phải sửa. Default method cung cấp một fallback và giảm
+chi phí evolution.
+
+Đây là lợi ích chung của Java default methods; không nên hiểu là bằng chứng duy
+nhất về lịch sử cụ thể mà Spring AI đã chọn design này.
+
+### Rủi ro: type nói “có method”, runtime nói “có thể không hỗ trợ”
+
+Vì `ChatModel extends StreamingChatModel`, đoạn code sau compile:
+
+```java
+import reactor.core.publisher.Flux;
+
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.StreamingChatModel;
+import org.springframework.ai.chat.prompt.Prompt;
+
+static Flux<ChatResponse> streamAnswer(StreamingChatModel model, Prompt prompt) {
+    return model.stream(prompt);
+}
+```
+
+Một `ChatModel` dùng default implementation có thể được truyền vào method này,
+nhưng lời gọi sẽ ném exception.
+
+### Đây là substitutability tension như thế nào?
+
+Liskov Substitution Principle yêu cầu subtype có thể thay parent type mà không
+phá expectation hợp lý của caller.
+
+Caller nhận `StreamingChatModel` có expectation tự nhiên:
+
+```text
+Object này hỗ trợ stream(Prompt).
+```
+
+Nhưng một `ChatModel` không override stream chỉ đáp ứng method signature, không
+đáp ứng behavior expectation. Nó fail muộn ở runtime thay vì bị ngăn ở compile
+time.
+
+Vì vậy đây là một **LSP tension**, dù Java type system vẫn hoàn toàn hợp lệ.
+
+### Hệ quả thực tế
+
+- Caller không thể suy luận streaming capability chỉ từ type `ChatModel`.
+- Test cần chạy streaming path với implementation thực tế.
+- Configuration sai có thể chỉ lộ ra khi method được gọi.
+- Generic code nhận `StreamingChatModel` có thể gặp implementation unsupported.
+
+### Các thiết kế thay thế
+
+#### Phương án A: tách capability hoàn toàn
+
+```java
+interface ChatModel extends Model<Prompt, ChatResponse> {
+}
+
+interface StreamingChatModel extends StreamingModel<Prompt, ChatResponse> {
+}
+```
+
+Provider hỗ trợ cả hai sẽ implement cả hai interface. Type system biểu diễn
+capability chính xác hơn, nhưng wiring/caller phải quản lý hai contract.
+
+#### Phương án B: capability query
+
+```java
+boolean supportsStreaming();
+```
+
+Caller có thể kiểm tra trước, nhưng tạo protocol “check rồi call”, có nguy cơ bị
+bỏ qua và không mạnh bằng type separation.
+
+#### Phương án C: giữ default như hiện tại
+
+API và wiring đơn giản hơn, đổi lại capability failure xảy ra ở runtime.
+
+Kết luận:
+
+> Default unsupported tối ưu cho implementability và API unification; cái giá là type `ChatModel` không chứng minh streaming capability và tạo tension với behavioral substitutability.
+
+---
+
+## 5. Vì sao application nên inject `ChatModel` thay vì `Model<?, ?>`?
+
+### Trả lời ngắn
+
+`ChatModel` diễn đạt đúng capability application cần và giữ cặp type
+`Prompt → ChatResponse`. `Model<?, ?>` nói “một model nào đó với request/response
+không biết”, nên vừa mất semantic vừa khó gọi một cách type-safe.
+
+### Wildcard capture khiến `call` gần như không dùng được
+
+Xét method:
+
+```java
+import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.model.Model;
+
+static void invokeUnknownModel(Model<?, ?> model, Prompt prompt) {
+    // Không compile:
+    // model.call(prompt);
+}
+```
+
+Tại sao compiler từ chối?
+
+`?` thứ nhất có nghĩa là một request type cụ thể nhưng caller **không biết type
+đó là gì**. Runtime object có thể là:
+
+```text
+Model<Prompt, ChatResponse>
+Model<ImagePrompt, ImageResponse>
+Model<EmbeddingRequest, EmbeddingResponse>
+```
+
+Nếu compiler cho truyền `Prompt`, object thực tế có thể là `ImageModel`. Vì vậy
+wildcard bảo vệ caller bằng cách không cho call với một request cụ thể.
+
+### `ChatModel` khôi phục exact types
+
+```java
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.prompt.Prompt;
+
+static ChatResponse invokeChat(ChatModel model, Prompt prompt) {
+    return model.call(prompt);
+}
+```
+
+Compiler biết chính xác:
+
+```text
+input  = Prompt
+output = ChatResponse
+```
+
+Không cần cast và không thể truyền nhầm `ImagePrompt`.
+
+### Dependency cũng diễn đạt intent nghiệp vụ
+
+Constructor sau nói rõ service cần chat capability:
+
+```java
+final class CustomerSupportService {
+
+    private final ChatModel chatModel;
+
+    CustomerSupportService(ChatModel chatModel) {
+        this.chatModel = chatModel;
+    }
+}
+```
+
+Nếu field là `Model<?, ?>`, reader chỉ biết service cần “một AI model nào đó”.
+Type không diễn đạt được ubiquitous language của module.
+
+### `ChatModel` còn cung cấp chat-specific API
+
+Ngoài exact generic pairing, nó có:
+
+- `call(String)`.
+- `call(Message...)`.
+- `getOptions()` trả `ChatOptions`.
+- `stream(Prompt)` và chat streaming conveniences.
+
+`Model<?, ?>` chỉ expose generic `call` contract, mà wildcard còn khiến call khó
+sử dụng.
+
+### Spring DI cũng cần một bean type đủ cụ thể
+
+Một application có thể đồng thời có:
+
+- `ChatModel`.
+- `EmbeddingModel`.
+- `ImageModel`.
+
+Inject generic `Model<?, ?>` không thể hiện model family nào được yêu cầu và có
+thể tạo nhiều bean candidates. Specialized type giúp container và con người cùng
+hiểu dependency.
+
+### Khi nào `Model<?, ?>` vẫn hữu ích?
+
+Nó có thể hữu ích cho infrastructure không cần invoke model, chẳng hạn:
+
+- Inventory liệt kê các model beans.
+- Diagnostics đọc class name.
+- Registry giữ heterogeneous model references.
+
+Nếu generic infrastructure thực sự muốn invoke, nó nên giữ type parameters được
+couple trong method:
+
+```java
+import org.springframework.ai.model.Model;
+import org.springframework.ai.model.ModelRequest;
+import org.springframework.ai.model.ModelResponse;
+
+static <Q extends ModelRequest<?>, S extends ModelResponse<?>>
+        S invoke(Model<Q, S> model, Q request) {
+
+    return model.call(request);
+}
+```
+
+Ở đây compiler biết `request` có cùng `Q` với request type mà `model` chấp nhận.
+Nó không bị mất thành hai wildcards vô danh.
+
+Kết luận:
+
+> Inject abstraction không có nghĩa chọn abstraction chung chung nhất; nên chọn abstraction hẹp nhất vẫn mô tả đầy đủ capability mà consumer cần. Với chat application, đó là `ChatModel`.
+
+---
+
+## 6. Generic Model API tái sử dụng behavior hay type shape?
+
+### Trả lời ngắn
+
+Ở core contract, nó chủ yếu tái sử dụng **type shape và vocabulary**, không tái
+sử dụng algorithm thực thi model. Nhưng type shape chung tạo điều kiện để các
+tầng khác tái sử dụng behavior.
+
+### Tầng 1: Generic contracts tái sử dụng structural shape
+
+Các interface cốt lõi rất mỏng:
+
+```text
+Model                 call(request)
+StreamingModel        stream(request)
+ModelRequest          instructions + options
+ModelResponse         results + response metadata
+ModelResult           output + result metadata
+ModelOptions          marker
+ResultMetadata        marker
+```
+
+`Model.call` không chứa implementation. Nó không:
+
+- Merge options.
+- Gọi provider SDK.
+- Retry.
+- Map native DTO.
+- Thực thi tool.
+- Ghi metrics.
+
+Vì vậy Generic Model API không phải Template Method và không tái sử dụng model
+invocation algorithm.
+
+### Tầng 2: Specialized interfaces có một ít reusable behavior
+
+`ChatModel` thêm default convenience methods như:
+
+```java
+call(String)
+call(Message...)
+getOptions()
+```
+
+`StreamingChatModel` thêm convenience mapping từ `Flux<ChatResponse>` sang
+`Flux<String>`.
+
+Đây là behavior reuse, nhưng nó nằm ở **chat specialization**, không phải phần
+generic foundation tối thiểu.
+
+Một số generic supporting types cũng có utility behavior, ví dụ default
+`ResponseMetadata.getOrDefault(...)` hoặc base implementation quản lý metadata
+map. Vì vậy nói “toàn bộ generic layer hoàn toàn không có behavior” cũng quá cực
+đoan.
+
+### Tầng 3: Provider implementations sở hữu model execution behavior
+
+Các classes như `OpenAiChatModel` và `AnthropicChatModel` thực hiện:
+
+```text
+Prompt
+→ provider-native request
+→ SDK/API invocation
+→ provider-native response
+→ ChatResponse
+```
+
+Behavior này không được implement một lần trong `Model` rồi kế thừa. Mỗi adapter
+phải thích nghi với provider protocol và capability riêng.
+
+### Tầng 4: common shape cho phép infrastructure reuse behavior
+
+Vì mọi response có `getResults()` và `getMetadata()`, infrastructure có thể viết
+behavior chung:
+
+- Observation handlers đọc request/response theo vocabulary ổn định.
+- Metrics đọc usage metadata.
+- Logging đọc instructions.
+- Test utilities tạo generic response assertions.
+
+Mối quan hệ nhân quả là:
+
+```mermaid
+flowchart LR
+    shape["Common type shape<br/>request / response / result / metadata"]
+    vocabulary[Stable vocabulary]
+    infrastructure[Reusable infrastructure behavior]
+    provider[Provider-specific execution behavior]
+
+    shape --> vocabulary
+    vocabulary --> infrastructure
+    provider -. vẫn nằm trong adapter .-> infrastructure
+```
+
+Type shape không phải behavior, nhưng nó là điều kiện để behavior bên ngoài
+generic contracts không phải viết lại cho từng provider/model family.
+
+### Bảng phân trách nhiệm
+
+| Tầng | Thứ được tái sử dụng | Ví dụ |
+|---|---|---|
+| Generic Model API | Type shape và vocabulary | `ModelRequest`, `ModelResponse`, `ModelResult` |
+| Specialized API | Domain-specific defaults/conveniences | `ChatModel.call(String)` |
+| Infrastructure | Cross-cutting behavior dựa trên common shape | Metrics, observation, logging |
+| Provider adapter | Native execution behavior | Request mapping, SDK call, response mapping |
+
+### Kết luận
+
+Không nên trả lời đơn giản:
+
+```text
+“Chỉ tái sử dụng type, không tái sử dụng behavior.”
+```
+
+Câu trả lời chính xác hơn là:
+
+> Generic Model API trực tiếp tái sử dụng structural type shape; specialized/default utilities tái sử dụng một phần behavior; và common shape đó gián tiếp mở khóa reusable infrastructure behavior, trong khi core provider execution vẫn thuộc từng adapter.
 
 </details>

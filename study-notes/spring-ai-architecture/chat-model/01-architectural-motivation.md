@@ -1430,35 +1430,212 @@ Tài liệu dự án gọi các abstraction này là nền tảng có nhiều im
 <details>
 <summary><strong>10. Yêu cầu số 7: cross-cutting concerns phải có điểm bám chung</strong></summary>
 
-Enterprise application còn cần:
+### Cross-cutting concern là gì?
 
-- Retry.
-- Metrics.
-- Tracing.
-- Token usage.
-- Logging.
-- Testing.
-- Mock/fake model.
-- Spring dependency injection.
-- Auto-configuration.
+Phần nghiệp vụ chính của một chat model là:
 
-Nếu application gọi trực tiếp từng SDK, mỗi provider cần cách tích hợp riêng cho những vấn đề trên.
+```text
+Prompt → model inference → ChatResponse
+```
 
-Một contract chung tạo ra điểm bám:
+Nhưng một enterprise application còn muốn **mọi** model call:
+
+- Được đo thời gian và đếm token.
+- Xuất trace để biết request đang chậm hoặc lỗi ở đâu.
+- Ghi log theo một policy chung.
+- Retry khi gặp lỗi tạm thời nếu operation phù hợp để retry.
+- Đi qua advisor như memory, RAG hoặc guardrail.
+- Có thể được thay bằng mock/fake trong test.
+- Được tạo và inject bằng Spring configuration.
+
+Những hành vi này không phải là nhiệm vụ “sinh câu trả lời” của riêng OpenAI hay
+Anthropic. Chúng **cắt ngang** nhiều provider và nhiều use case, nên được gọi là
+cross-cutting concerns.
+
+Ví dụ, metrics không chỉ cần cho `CustomerSupportService`; nó còn cần cho
+summarization, document extraction và mọi service khác gọi model. Tương tự,
+tracing không phải capability của một model cụ thể mà là nhu cầu vận hành của
+toàn application.
+
+### Vấn đề nếu không có boundary chung
+
+Giả sử application gọi thẳng hai native SDK:
+
+```mermaid
+flowchart LR
+    support[CustomerSupportService] --> openAi[OpenAI SDK call]
+    summary[SummaryService] --> anthropic[Anthropic SDK call]
+
+    openAiMetrics[OpenAI-specific metrics code] --> openAi
+    anthropicMetrics[Anthropic-specific metrics code] --> anthropic
+```
+
+Để đếm token, code OpenAI phải biết token usage nằm ở đâu trong OpenAI response;
+code Anthropic lại phải hiểu Anthropic usage object. Logging cũng phải biết native
+message format của từng SDK. Test double phải mock những client và DTO khác nhau.
+
+Khi thêm provider thứ ba, ta không chỉ viết thêm request/response adapter. Ta còn
+có nguy cơ viết lại metrics, tracing, logging, error mapping và test setup cho
+provider đó.
+
+Vấn đề kiến trúc ở đây là:
+
+> Các concern dùng chung không có một vị trí ổn định để quan sát hoặc bao quanh một model operation.
+
+### “Điểm bám chung” cụ thể là gì?
+
+`ChatModel` tạo ra một **model-operation boundary** có hình dạng ổn định:
+
+```java
+ChatResponse call(Prompt prompt);
+
+Flux<ChatResponse> stream(Prompt prompt);
+```
+
+Tại boundary này, framework luôn biết:
+
+1. Operation bắt đầu khi `call` hoặc `stream` được gọi.
+2. Input có canonical type là `Prompt`.
+3. Operation đang được xử lý bởi provider nào.
+4. Output có canonical type là `ChatResponse`.
+5. Operation kết thúc thành công hay ném lỗi.
+
+Đó chính là những dữ liệu một cross-cutting concern thường cần. Nó không phải
+hiểu `ChatCompletionCreateParams`, OpenAI `Choice` hay Anthropic content block.
+
+Có thể hình dung các concern cùng bám vào một boundary như sau:
 
 ```mermaid
 flowchart TB
-    retry[Retry policy] --> boundary[ChatModel operation boundary]
-    metrics[Metrics] --> boundary
-    observations[Observations / tracing] --> boundary
-    testing[Mocks / test doubles] --> boundary
+    application[Application / ChatClient] --> boundary["ChatModel boundary<br/>call(Prompt) / stream(Prompt)"]
+    boundary --> adapter[Provider ChatModel adapter]
+
+    advisors[Advisors] -. trước / sau .-> boundary
+    observation[Observation lifecycle] -. start / stop / error .-> boundary
+    logging[Logging] -. đọc Prompt / response .-> observation
+    metrics[Metrics / token usage] -. đọc ChatResponseMetadata .-> observation
+    testing[Mock / fake ChatModel] -. thay implementation .-> boundary
+    wiring[DI / auto-configuration] -. chọn implementation .-> boundary
 ```
 
-Đây là sơ đồ conceptual attachment points, không phải UML class relationship:
-các concern không nhất thiết đều implement hoặc giữ reference trực tiếp đến
-`ChatModel`.
+Đây là conceptual attachment-point diagram, không phải UML class diagram. Các
+concern không nhất thiết implement `ChatModel` hay giữ một field kiểu
+`ChatModel`. “Bám vào” có nghĩa chúng có một operation lifecycle và một bộ type
+ổn định để intercept, observe, decorate hoặc thay thế.
 
-Điều này không có nghĩa mọi cross-cutting concern đều được implement ngay trong interface. Ý nghĩa là framework có một model-operation boundary thống nhất để áp dụng chúng.
+### Ví dụ thực tế: observability của một OpenAI call
+
+Trong
+[`OpenAiChatModel`](../../../models/spring-ai-openai/src/main/java/org/springframework/ai/openai/OpenAiChatModel.java),
+`internalCall(...)` thực hiện đại khái theo luồng sau:
+
+```mermaid
+sequenceDiagram
+    actor Application
+    participant Model as OpenAiChatModel
+    participant Observation as Micrometer Observation
+    participant Provider as OpenAI API
+    participant Handlers as Observation handlers
+
+    Application->>Model: call(Prompt)
+    Model->>Observation: start(ChatModelObservationContext)
+    Note over Model,Observation: Context giữ Prompt, provider="openai"
+    Model->>Provider: native request
+    Provider-->>Model: native ChatCompletion
+    Model->>Model: map thành ChatResponse
+    Model->>Observation: context.setResponse(chatResponse)
+    Observation->>Handlers: stop(context)
+    Handlers->>Handlers: trace, log, record duration/token metrics
+    Model-->>Application: ChatResponse
+```
+
+Luồng source code tương ứng:
+
+1. `OpenAiChatModel.call(Prompt)` nhận canonical request.
+2. Model tạo
+   [`ChatModelObservationContext`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/observation/ChatModelObservationContext.java)
+   với `Prompt` và provider `openai`.
+3. Native API call được thực thi bên trong một Micrometer observation.
+4. OpenAI response được map thành canonical `ChatResponse`.
+5. Model gọi `observationContext.setResponse(chatResponse)` trước khi observation
+   kết thúc.
+6. Các observation handler có thể đọc cùng context mà không phụ thuộc OpenAI
+   SDK.
+
+Ví dụ,
+[`ChatModelMeterObservationHandler`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/observation/ChatModelMeterObservationHandler.java)
+đọc:
+
+```java
+context.getResponse().getMetadata().getUsage()
+```
+
+rồi tạo metrics cho input, output và total tokens. Handler này làm việc với
+`ChatResponseMetadata` và `Usage` của Spring AI; nó không cần biết OpenAI gọi
+field là gì hoặc Anthropic biểu diễn usage ra sao. Trách nhiệm chuẩn hóa native
+usage thuộc về từng provider adapter.
+
+Tương tự,
+[`ChatModelPromptContentObservationHandler`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/observation/ChatModelPromptContentObservationHandler.java)
+có thể đọc messages từ `Prompt` để logging. Cùng một observation context phục vụ
+được nhiều concern vì input và output đã có canonical type.
+
+### Mỗi concern bám vào boundary theo một cách khác nhau
+
+| Concern | Điểm bám trong thiết kế | Lợi ích của contract chung |
+|---|---|---|
+| Metrics và token usage | Observation handler đọc `ChatResponse.getMetadata().getUsage()` | Không phải parse native usage DTO của từng provider |
+| Tracing | Observation bao quanh một logical `call`/`stream` operation | Trace có vocabulary chung như operation type, provider và model |
+| Logging | Handler đọc canonical `Prompt` hoặc `ChatResponse` | Một logging policy có thể dùng cho nhiều provider |
+| Advisors | `ChatClient` dựng advisor chain trước khi đi đến model call | Memory, RAG hoặc guardrail không phải tích hợp lại với từng SDK |
+| Testing | Test thay concrete provider bean bằng một `ChatModel` fake/mock | Business test không cần API key, network hoặc native provider DTO |
+| Dependency injection | Service phụ thuộc `ChatModel`; auto-configuration cung cấp implementation | Đổi provider chủ yếu là đổi dependency, properties và wiring |
+| Retry | Provider integration/transport áp dụng retry quanh native invocation | Có một logical model operation để cấu hình và quan sát retry, nhưng policy vẫn có thể khác theo provider và sync/stream |
+
+Retry cần được hiểu cẩn thận: có boundary chung **không có nghĩa** Spring AI nên
+đặt một retry implementation duy nhất trong `ChatModel` interface. Provider có
+error code, rate-limit rule và streaming behavior khác nhau. Retry có thể nằm ở
+provider client hoặc provider model, trong khi observation vẫn coi toàn bộ quá
+trình là một logical model operation.
+
+### Vì sao testing cũng là một cross-cutting concern?
+
+Nếu service phụ thuộc `ChatModel`, test có thể thay provider thật bằng một
+implementation cố định:
+
+```java
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
+
+ChatResponse expectedResponse = createExpectedResponse();
+ChatModel fakeModel = prompt -> expectedResponse;
+```
+
+Fake trên không cần biết OpenAI client, Anthropic authentication hay HTTP. Mọi
+service phụ thuộc `ChatModel` đều có thể sử dụng cùng kiểu test seam. Đây cũng là
+một “điểm bám”: test thay implementation tại chính port mà production wiring sử
+dụng.
+
+### Điều requirement này không nói
+
+Requirement không nói rằng:
+
+- `ChatModel` interface phải tự implement logging, retry, metrics và tracing.
+- Mọi provider bắt buộc dùng một retry policy giống nhau.
+- Mọi concern phải được cài bằng cùng một design pattern.
+
+Nó nói rằng framework cần một boundary đủ ổn định để các cơ chế khác nhau có thể
+được xây **một cách nhất quán** quanh model operation. `ChatModel`, `Prompt`,
+`ChatResponse`, metadata và observation context cùng nhau tạo nên boundary đó.
+
+Chuỗi suy luận là:
+
+```text
+Nhiều model call cần cùng concern
+→ cần nhận diện cùng một logical operation
+→ operation cần input/output và lifecycle ổn định
+→ ChatModel.call/stream với Prompt/ChatResponse trở thành điểm bám chung
+```
 
 </details>
 

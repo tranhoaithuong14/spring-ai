@@ -155,12 +155,12 @@ hay `module-info.java`.
 
 Một số module tiêu biểu:
 
-| Nhóm module | Trách nhiệm | Ví dụ |
-|---|---|---|
-| Core model | Chứa abstraction và canonical types chung | [`spring-ai-model`](../../../spring-ai-model) |
-| High-level client | Cung cấp fluent API và orchestration phía trên model | [`spring-ai-client-chat`](../../../spring-ai-client-chat) |
-| Provider adapter | Chuyển đổi giữa Spring AI types và SDK/API của từng provider | [`spring-ai-openai`](../../../models/spring-ai-openai), [`spring-ai-anthropic`](../../../models/spring-ai-anthropic) |
-| Auto-configuration | Tạo bean và wiring provider vào Spring Boot application | [`spring-ai-autoconfigure-model-openai`](../../../auto-configurations/models/spring-ai-autoconfigure-model-openai) |
+| Nhóm module        | Trách nhiệm                                                  | Ví dụ                                                                                                                |
+| ------------------ | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| Core model         | Chứa abstraction và canonical types chung                    | [`spring-ai-model`](../../../spring-ai-model)                                                                        |
+| High-level client  | Cung cấp fluent API và orchestration phía trên model         | [`spring-ai-client-chat`](../../../spring-ai-client-chat)                                                            |
+| Provider adapter   | Chuyển đổi giữa Spring AI types và SDK/API của từng provider | [`spring-ai-openai`](../../../models/spring-ai-openai), [`spring-ai-anthropic`](../../../models/spring-ai-anthropic) |
+| Auto-configuration | Tạo bean và wiring provider vào Spring Boot application      | [`spring-ai-autoconfigure-model-openai`](../../../auto-configurations/models/spring-ai-autoconfigure-model-openai)   |
 
 Dependency giữa các module đi theo hướng vào abstraction ổn định:
 
@@ -456,16 +456,16 @@ Một abstraction tốt thường được đặt quanh “trục biến động
 Mỗi nhu cầu tương đối ổn định của application được Spring AI ánh xạ vào một số
 abstraction cụ thể:
 
-| Nhu cầu của application | Thành phần Spring AI | Ranh giới trách nhiệm |
-|---|---|---|
-| **Gửi một conversation cho model** | [`Prompt`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/prompt/Prompt.java) chứa `List<Message>`; các message cụ thể thuộc [`chat.messages`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/messages). | `Prompt` biểu diễn toàn bộ messages của **một lần gọi model**. Nó không tự lưu lịch sử giữa các lần gọi. Nếu cần giữ context qua nhiều lượt, [`ChatMemory`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/memory/ChatMemory.java) lưu và truy xuất messages theo `conversationId`, sau đó memory advisor đưa chúng vào request. |
-| **Đưa system instructions** | [`SystemMessage`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/messages/SystemMessage.java) biểu diễn message có `MessageType.SYSTEM`; `Prompt.getSystemMessage()` truy xuất system message. Ở API cấp cao, `ChatClient` cung cấp `system(...)`. | Core model coi system instruction là một loại `Message`; provider adapter chịu trách nhiệm chuyển nó sang format mà provider hỗ trợ. |
-| **Yêu cầu model tạo một hoặc nhiều câu trả lời** | [`ChatResponse`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/model/ChatResponse.java) chứa `List<Generation>`. `getResults()` trả tất cả generations; `getResult()` là convenience method trả generation đầu tiên. | Spring AI chuẩn hóa **response có nhiều candidate**. Tuy nhiên, số lượng candidate cần yêu cầu chưa phải portable option chung: OpenAI dùng `n`, Google dùng `candidateCount`, và không phải provider nào cũng hỗ trợ giống nhau. |
-| **Cấu hình temperature, model hoặc giới hạn token** | [`ChatOptions`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/prompt/ChatOptions.java) định nghĩa các portable options như `model`, `temperature` và `maxTokens`; options được gắn vào `Prompt`. | `ChatOptions` chỉ chứa phần chung. Capability riêng đi qua các type như `OpenAiChatOptions` hoặc `AnthropicChatOptions`, đổi lại application bị giảm portability. |
-| **Nhận generated content** | `ChatModel.call(...)` trả [`ChatResponse`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/model/ChatResponse.java); mỗi [`Generation`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/model/Generation.java) chứa một [`AssistantMessage`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/messages/AssistantMessage.java). | `AssistantMessage` giữ generated text, media và tool calls. `String` chỉ là convenience view; canonical output vẫn là object có cấu trúc. |
-| **Biết model có yêu cầu gọi tool hay không** | `ChatResponse.hasToolCalls()` kiểm tra response; `AssistantMessage.hasToolCalls()` và `getToolCalls()` expose các [`AssistantMessage.ToolCall`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/messages/AssistantMessage.java). | Phát hiện/biểu diễn tool call khác với thực thi tool. [`ToolCallingManager`](../../../spring-ai-model/src/main/java/org/springframework/ai/model/tool/ToolCallingManager.java) và tool-calling advisor điều phối việc resolve và execute tool. |
-| **Đọc token usage và finish reason** | `ChatResponse.getMetadata().getUsage()` trả usage ở cấp response; `Generation.getMetadata().getFinishReason()` trả finish reason ở cấp từng generation. | Usage thuộc toàn bộ model operation, còn finish reason có thể khác giữa các candidate nên nằm trong `ChatGenerationMetadata`. |
-| **Gọi đồng bộ hoặc nhận kết quả dạng stream** | [`ChatModel`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/model/ChatModel.java) cung cấp `call(Prompt): ChatResponse` và `stream(Prompt): Flux<ChatResponse>`. `ChatClient` expose fluent terminal operations `call()` và `stream()`. | Cả hai cùng dùng `Prompt` và `ChatResponse`; provider adapter chuyển native streaming events thành các Spring AI response chunks. Streaming vẫn là capability: default implementation có thể báo không hỗ trợ. |
+| Nhu cầu của application                             | Thành phần Spring AI                                                                                                                                                                                                                                                                                                                                                                   | Ranh giới trách nhiệm                                                                                                                                                                                                                                                                                                                                |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Gửi một conversation cho model**                  | [`Prompt`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/prompt/Prompt.java) chứa `List<Message>`; các message cụ thể thuộc [`chat.messages`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/messages).                                                                                                                                       | `Prompt` biểu diễn toàn bộ messages của **một lần gọi model**. Nó không tự lưu lịch sử giữa các lần gọi. Nếu cần giữ context qua nhiều lượt, [`ChatMemory`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/memory/ChatMemory.java) lưu và truy xuất messages theo `conversationId`, sau đó memory advisor đưa chúng vào request. |
+| **Đưa system instructions**                         | [`SystemMessage`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/messages/SystemMessage.java) biểu diễn message có `MessageType.SYSTEM`; `Prompt.getSystemMessage()` truy xuất system message. Ở API cấp cao, `ChatClient` cung cấp `system(...)`.                                                                                                                 | Core model coi system instruction là một loại `Message`; provider adapter chịu trách nhiệm chuyển nó sang format mà provider hỗ trợ.                                                                                                                                                                                                                 |
+| **Yêu cầu model tạo một hoặc nhiều câu trả lời**    | [`ChatResponse`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/model/ChatResponse.java) chứa `List<Generation>`. `getResults()` trả tất cả generations; `getResult()` là convenience method trả generation đầu tiên.                                                                                                                                              | Spring AI chuẩn hóa **response có nhiều candidate**. Tuy nhiên, số lượng candidate cần yêu cầu chưa phải portable option chung: OpenAI dùng `n`, Google dùng `candidateCount`, và không phải provider nào cũng hỗ trợ giống nhau.                                                                                                                    |
+| **Cấu hình temperature, model hoặc giới hạn token** | [`ChatOptions`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/prompt/ChatOptions.java) định nghĩa các portable options như `model`, `temperature` và `maxTokens`; options được gắn vào `Prompt`.                                                                                                                                                                  | `ChatOptions` chỉ chứa phần chung. Capability riêng đi qua các type như `OpenAiChatOptions` hoặc `AnthropicChatOptions`, đổi lại application bị giảm portability.                                                                                                                                                                                    |
+| **Nhận generated content**                          | `ChatModel.call(...)` trả [`ChatResponse`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/model/ChatResponse.java); mỗi [`Generation`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/model/Generation.java) chứa một [`AssistantMessage`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/messages/AssistantMessage.java). | `AssistantMessage` giữ generated text, media và tool calls. `String` chỉ là convenience view; canonical output vẫn là object có cấu trúc.                                                                                                                                                                                                            |
+| **Biết model có yêu cầu gọi tool hay không**        | `ChatResponse.hasToolCalls()` kiểm tra response; `AssistantMessage.hasToolCalls()` và `getToolCalls()` expose các [`AssistantMessage.ToolCall`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/messages/AssistantMessage.java).                                                                                                                                    | Phát hiện/biểu diễn tool call khác với thực thi tool. [`ToolCallingManager`](../../../spring-ai-model/src/main/java/org/springframework/ai/model/tool/ToolCallingManager.java) và tool-calling advisor điều phối việc resolve và execute tool.                                                                                                       |
+| **Đọc token usage và finish reason**                | `ChatResponse.getMetadata().getUsage()` trả usage ở cấp response; `Generation.getMetadata().getFinishReason()` trả finish reason ở cấp từng generation.                                                                                                                                                                                                                                | Usage thuộc toàn bộ model operation, còn finish reason có thể khác giữa các candidate nên nằm trong `ChatGenerationMetadata`.                                                                                                                                                                                                                        |
+| **Gọi đồng bộ hoặc nhận kết quả dạng stream**       | [`ChatModel`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/model/ChatModel.java) cung cấp `call(Prompt): ChatResponse` và `stream(Prompt): Flux<ChatResponse>`. `ChatClient` expose fluent terminal operations `call()` và `stream()`.                                                                                                                           | Cả hai cùng dùng `Prompt` và `ChatResponse`; provider adapter chuyển native streaming events thành các Spring AI response chunks. Streaming vẫn là capability: default implementation có thể báo không hỗ trợ.                                                                                                                                       |
 
 Đây là ngôn ngữ của bài toán AI application.
 
@@ -474,18 +474,18 @@ abstraction cụ thể:
 Spring AI không thể loại bỏ những khác biệt này. Thay vào đó, framework đặt
 chúng sau các adapter, provider module và provider-specific configuration:
 
-| Phần thay đổi theo provider | Thành phần Spring AI xử lý | Spring AI giải quyết đến mức nào? |
-|---|---|---|
-| **SDK và request/response classes** | Các implementation như [`OpenAiChatModel`](../../../models/spring-ai-openai/src/main/java/org/springframework/ai/openai/OpenAiChatModel.java), [`AnthropicChatModel`](../../../models/spring-ai-anthropic/src/main/java/org/springframework/ai/anthropic/AnthropicChatModel.java) và [`OllamaChatModel`](../../../models/spring-ai-ollama/src/main/java/org/springframework/ai/ollama/OllamaChatModel.java) đóng vai trò provider adapter. | Adapter nhận canonical `Prompt`, tạo native request, gọi SDK/API, rồi chuyển native response thành `ChatResponse`. Nhờ đó, phần lớn SDK types bị giữ trong provider module thay vì lan vào application. |
-| **Authentication và endpoint** | Provider properties và auto-configuration, chẳng hạn [`AbstractOpenAiProperties`](../../../auto-configurations/models/spring-ai-autoconfigure-model-openai/src/main/java/org/springframework/ai/model/openai/autoconfigure/AbstractOpenAiProperties.java), `OpenAiChatProperties`, `AnthropicChatProperties`, cùng các lớp setup/client builder của provider. | Spring Boot tự tạo và wiring client từ `apiKey`, credential, `baseUrl`, timeout, proxy và headers. Framework cô lập phần khởi tạo, nhưng không tạo một credential model chung: tên property và cơ chế authentication vẫn provider-specific. |
-| **Role/message format** | Core cung cấp `Message`, `SystemMessage`, `UserMessage`, `AssistantMessage` và `ToolResponseMessage`; mỗi provider adapter có conversion code như `OpenAiChatModel.createRequest(...)` hoặc `OllamaChatModel.ollamaChatRequest(...)`. | Application dùng message model chung. Adapter quyết định một Spring AI role được biểu diễn thế nào trong native protocol, hoặc phải reject/điều chỉnh nếu provider không hỗ trợ tương đương. |
-| **Tên options và phạm vi giá trị** | [`ChatOptions`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/prompt/ChatOptions.java) chứa phần portable; `OpenAiChatOptions`, `AnthropicChatOptions` và [`OllamaChatOptions`](../../../models/spring-ai-ollama/src/main/java/org/springframework/ai/ollama/api/OllamaChatOptions.java) chứa phần riêng. Adapter merge, kiểm tra và map options sang native request. | Các khái niệm chung như `temperature` được chuẩn hóa ở API level, nhưng provider vẫn có thể diễn giải giá trị khác nhau. Option không được hỗ trợ có thể bị ignore, cảnh báo hoặc reject; ví dụ OpenAI adapter cảnh báo và bỏ qua `topK`. |
-| **Multimodal content format** | [`Media`](../../../spring-ai-commons/src/main/java/org/springframework/ai/content/Media.java) và [`MediaContent`](../../../spring-ai-commons/src/main/java/org/springframework/ai/content/MediaContent.java) tạo representation chung; `UserMessage`/`AssistantMessage` mang media. Provider adapter chuyển chúng thành native image, audio hoặc file content parts. | Spring AI chuẩn hóa MIME type và data holder, nhưng adapter vẫn phải xử lý URI, base64, resource và giới hạn modality của từng model. Việc có `Media` không có nghĩa mọi provider/model đều nhận mọi media type. |
-| **Tool schema** | [`ToolDefinition`](../../../spring-ai-model/src/main/java/org/springframework/ai/tool/definition/ToolDefinition.java), `ToolCallback`, [`ToolCallingChatOptions`](../../../spring-ai-model/src/main/java/org/springframework/ai/model/tool/ToolCallingChatOptions.java) và [`ToolCallingManager`](../../../spring-ai-model/src/main/java/org/springframework/ai/model/tool/ToolCallingManager.java) định nghĩa model chung. Mỗi provider adapter chuyển definition thành native tool/function schema. | Framework chuẩn hóa định nghĩa và vòng đời tool ở phía application. Tên field, JSON Schema dialect, tool-choice mode và cách tool call xuất hiện trong native response vẫn được adapter xử lý riêng. |
-| **Streaming event format** | `ChatModel.stream(Prompt)` expose `Flux<ChatResponse>`; từng provider adapter chuyển native events/chunks sang type này. [`MessageAggregator`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/model/MessageAggregator.java) và provider-specific merger như `OpenAiChatModel.ChunkMerger` hỗ trợ ghép text/tool-call chunks. | Spring AI chuẩn hóa outer reactive contract, nhưng ranh giới chunk, thời điểm có usage, finish reason và partial tool-call data vẫn phụ thuộc provider. Adapter phải giữ state hoặc aggregate khi native protocol chia dữ liệu khác nhau. |
-| **Error codes, retry và rate-limit metadata** | Provider properties/options cấu hình timeout và `maxRetries`; SDK/setup code thực hiện request policy. [`ChatResponseMetadata`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/metadata/ChatResponseMetadata.java) expose [`RateLimit`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/metadata/RateLimit.java), với implementation như `OpenAiRateLimit` và `AnthropicRateLimit`; observation API ghi nhận operation/error. | Rate-limit data được chuẩn hóa khi provider cung cấp đủ headers/metadata, nhưng mức hỗ trợ khác nhau. Exception types chưa được hợp nhất hoàn toàn thành một taxonomy portable; SDK/provider exceptions vẫn có thể đi qua boundary và retry semantics vẫn cần provider-specific setup. |
-| **Capability chỉ một số provider có** | Provider-specific options và metadata là escape hatch. Với capability đủ phổ biến, Spring AI có thể bổ sung mixin contract như [`StructuredOutputChatOptions`](../../../spring-ai-model/src/main/java/org/springframework/ai/model/tool/StructuredOutputChatOptions.java) hoặc `ToolCallingChatOptions`. | Capability chưa phổ quát được giữ trong provider module để core không biến thành universal superset. Đổi lại, application sử dụng escape hatch sẽ chủ động chấp nhận coupling với provider. |
-| **Quy tắc hợp lệ của từng model** | Provider adapter và options builder thực hiện validation, chẳng hạn `OpenAiChatModel.verifyPromptChatOptions(...)` và `OllamaChatModel.verifyPromptChatOptions(...)`; SDK/provider tiếp tục kiểm tra các ràng buộc còn lại. | Không có một validator chung biết mọi model. Spring AI kiểm tra những invariant framework/provider adapter biết, nhưng một số lỗi chỉ xuất hiện khi SDK hoặc remote API xử lý request. |
+| Phần thay đổi theo provider                   | Thành phần Spring AI xử lý                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Spring AI giải quyết đến mức nào?                                                                                                                                                                                                                                                      |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **SDK và request/response classes**           | Các implementation như [`OpenAiChatModel`](../../../models/spring-ai-openai/src/main/java/org/springframework/ai/openai/OpenAiChatModel.java), [`AnthropicChatModel`](../../../models/spring-ai-anthropic/src/main/java/org/springframework/ai/anthropic/AnthropicChatModel.java) và [`OllamaChatModel`](../../../models/spring-ai-ollama/src/main/java/org/springframework/ai/ollama/OllamaChatModel.java) đóng vai trò provider adapter.                                                            | Adapter nhận canonical `Prompt`, tạo native request, gọi SDK/API, rồi chuyển native response thành `ChatResponse`. Nhờ đó, phần lớn SDK types bị giữ trong provider module thay vì lan vào application.                                                                                |
+| **Authentication và endpoint**                | Provider properties và auto-configuration, chẳng hạn [`AbstractOpenAiProperties`](../../../auto-configurations/models/spring-ai-autoconfigure-model-openai/src/main/java/org/springframework/ai/model/openai/autoconfigure/AbstractOpenAiProperties.java), `OpenAiChatProperties`, `AnthropicChatProperties`, cùng các lớp setup/client builder của provider.                                                                                                                                         | Spring Boot tự tạo và wiring client từ `apiKey`, credential, `baseUrl`, timeout, proxy và headers. Framework cô lập phần khởi tạo, nhưng không tạo một credential model chung: tên property và cơ chế authentication vẫn provider-specific.                                            |
+| **Role/message format**                       | Core cung cấp `Message`, `SystemMessage`, `UserMessage`, `AssistantMessage` và `ToolResponseMessage`; mỗi provider adapter có conversion code như `OpenAiChatModel.createRequest(...)` hoặc `OllamaChatModel.ollamaChatRequest(...)`.                                                                                                                                                                                                                                                                 | Application dùng message model chung. Adapter quyết định một Spring AI role được biểu diễn thế nào trong native protocol, hoặc phải reject/điều chỉnh nếu provider không hỗ trợ tương đương.                                                                                           |
+| **Tên options và phạm vi giá trị**            | [`ChatOptions`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/prompt/ChatOptions.java) chứa phần portable; `OpenAiChatOptions`, `AnthropicChatOptions` và [`OllamaChatOptions`](../../../models/spring-ai-ollama/src/main/java/org/springframework/ai/ollama/api/OllamaChatOptions.java) chứa phần riêng. Adapter merge, kiểm tra và map options sang native request.                                                                                                            | Các khái niệm chung như `temperature` được chuẩn hóa ở API level, nhưng provider vẫn có thể diễn giải giá trị khác nhau. Option không được hỗ trợ có thể bị ignore, cảnh báo hoặc reject; ví dụ OpenAI adapter cảnh báo và bỏ qua `topK`.                                              |
+| **Multimodal content format**                 | [`Media`](../../../spring-ai-commons/src/main/java/org/springframework/ai/content/Media.java) và [`MediaContent`](../../../spring-ai-commons/src/main/java/org/springframework/ai/content/MediaContent.java) tạo representation chung; `UserMessage`/`AssistantMessage` mang media. Provider adapter chuyển chúng thành native image, audio hoặc file content parts.                                                                                                                                  | Spring AI chuẩn hóa MIME type và data holder, nhưng adapter vẫn phải xử lý URI, base64, resource và giới hạn modality của từng model. Việc có `Media` không có nghĩa mọi provider/model đều nhận mọi media type.                                                                       |
+| **Tool schema**                               | [`ToolDefinition`](../../../spring-ai-model/src/main/java/org/springframework/ai/tool/definition/ToolDefinition.java), `ToolCallback`, [`ToolCallingChatOptions`](../../../spring-ai-model/src/main/java/org/springframework/ai/model/tool/ToolCallingChatOptions.java) và [`ToolCallingManager`](../../../spring-ai-model/src/main/java/org/springframework/ai/model/tool/ToolCallingManager.java) định nghĩa model chung. Mỗi provider adapter chuyển definition thành native tool/function schema. | Framework chuẩn hóa định nghĩa và vòng đời tool ở phía application. Tên field, JSON Schema dialect, tool-choice mode và cách tool call xuất hiện trong native response vẫn được adapter xử lý riêng.                                                                                   |
+| **Streaming event format**                    | `ChatModel.stream(Prompt)` expose `Flux<ChatResponse>`; từng provider adapter chuyển native events/chunks sang type này. [`MessageAggregator`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/model/MessageAggregator.java) và provider-specific merger như `OpenAiChatModel.ChunkMerger` hỗ trợ ghép text/tool-call chunks.                                                                                                                                                      | Spring AI chuẩn hóa outer reactive contract, nhưng ranh giới chunk, thời điểm có usage, finish reason và partial tool-call data vẫn phụ thuộc provider. Adapter phải giữ state hoặc aggregate khi native protocol chia dữ liệu khác nhau.                                              |
+| **Error codes, retry và rate-limit metadata** | Provider properties/options cấu hình timeout và `maxRetries`; SDK/setup code thực hiện request policy. [`ChatResponseMetadata`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/metadata/ChatResponseMetadata.java) expose [`RateLimit`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/metadata/RateLimit.java), với implementation như `OpenAiRateLimit` và `AnthropicRateLimit`; observation API ghi nhận operation/error.                                  | Rate-limit data được chuẩn hóa khi provider cung cấp đủ headers/metadata, nhưng mức hỗ trợ khác nhau. Exception types chưa được hợp nhất hoàn toàn thành một taxonomy portable; SDK/provider exceptions vẫn có thể đi qua boundary và retry semantics vẫn cần provider-specific setup. |
+| **Capability chỉ một số provider có**         | Provider-specific options và metadata là escape hatch. Với capability đủ phổ biến, Spring AI có thể bổ sung mixin contract như [`StructuredOutputChatOptions`](../../../spring-ai-model/src/main/java/org/springframework/ai/model/tool/StructuredOutputChatOptions.java) hoặc `ToolCallingChatOptions`.                                                                                                                                                                                              | Capability chưa phổ quát được giữ trong provider module để core không biến thành universal superset. Đổi lại, application sử dụng escape hatch sẽ chủ động chấp nhận coupling với provider.                                                                                            |
+| **Quy tắc hợp lệ của từng model**             | Provider adapter và options builder thực hiện validation, chẳng hạn `OpenAiChatModel.verifyPromptChatOptions(...)` và `OllamaChatModel.verifyPromptChatOptions(...)`; SDK/provider tiếp tục kiểm tra các ràng buộc còn lại.                                                                                                                                                                                                                                                                           | Không có một validator chung biết mọi model. Spring AI kiểm tra những invariant framework/provider adapter biết, nhưng một số lỗi chỉ xuất hiện khi SDK hoặc remote API xử lý request.                                                                                                 |
 
 Đây là ngôn ngữ của infrastructure/provider.
 
@@ -646,12 +646,12 @@ thể sử dụng hoặc thay thế hành vi mà không biết implementation b�
 
 Các participant trong trường hợp này là:
 
-| Vai trò Strategy | Thành phần trong Spring AI |
-|---|---|
-| `Context` | `CustomerSupportService`, hoặc ở cấp framework là `ChatClient` |
-| `Strategy` | [`ChatModel`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/model/ChatModel.java) |
-| `ConcreteStrategy` | `OpenAiChatModel`, `AnthropicChatModel`, `OllamaChatModel`, `GoogleGenAiChatModel`, ... |
-| Strategy selection | Spring bean configuration, auto-configuration, qualifier hoặc constructor wiring |
+| Vai trò Strategy   | Thành phần trong Spring AI                                                                             |
+| ------------------ | ------------------------------------------------------------------------------------------------------ |
+| `Context`          | `CustomerSupportService`, hoặc ở cấp framework là `ChatClient`                                         |
+| `Strategy`         | [`ChatModel`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/model/ChatModel.java) |
+| `ConcreteStrategy` | `OpenAiChatModel`, `AnthropicChatModel`, `OllamaChatModel`, `GoogleGenAiChatModel`, ...                |
+| Strategy selection | Spring bean configuration, auto-configuration, qualifier hoặc constructor wiring                       |
 
 Từ góc nhìn của context, hành vi cần thực hiện là:
 
@@ -682,12 +682,12 @@ Ports and Adapters chia hệ thống thành:
 
 Ánh xạ vào Spring AI:
 
-| Vai trò | Thành phần |
-|---|---|
+| Vai trò                 | Thành phần                                                              |
+| ----------------------- | ----------------------------------------------------------------------- |
 | Phần sử dụng capability | `CustomerSupportService`, `ChatClient`, advisors và tool infrastructure |
-| Outbound/driven port | `ChatModel` |
-| Provider adapters | `OpenAiChatModel`, `AnthropicChatModel`, `OllamaChatModel`, ... |
-| External systems | OpenAI SDK/API, Anthropic SDK/API, Ollama API, ... |
+| Outbound/driven port    | `ChatModel`                                                             |
+| Provider adapters       | `OpenAiChatModel`, `AnthropicChatModel`, `OllamaChatModel`, ...         |
+| External systems        | OpenAI SDK/API, Anthropic SDK/API, Ollama API, ...                      |
 
 `ChatModel` là port vì nó mô tả operation mà phía trong cần:
 
@@ -729,11 +729,11 @@ trở thành một hexagonal architecture.
 
 ### Ba góc nhìn khác nhau trên cùng một thiết kế
 
-| Góc nhìn | Câu hỏi nó trả lời |
-|---|---|
-| Dependency Inversion | Dependency nên hướng về abstraction hay provider detail? |
-| Strategy | Làm thế nào thay hành vi gọi model mà context không đổi? |
-| Ports and Adapters | Ranh giới chuyển đổi giữa application model và external provider nằm ở đâu? |
+| Góc nhìn             | Câu hỏi nó trả lời                                                          |
+| -------------------- | --------------------------------------------------------------------------- |
+| Dependency Inversion | Dependency nên hướng về abstraction hay provider detail?                    |
+| Strategy             | Làm thế nào thay hành vi gọi model mà context không đổi?                    |
+| Ports and Adapters   | Ranh giới chuyển đổi giữa application model và external provider nằm ở đâu? |
 
 Vì vậy, `OpenAiChatModel` đồng thời có thể là:
 
@@ -869,16 +869,16 @@ cho application thực tế.
 “Đủ giàu” nghĩa là model chung phải giữ được những khác biệt **có ý nghĩa đối
 với application**, thay vì flatten tất cả thành text:
 
-| Semantic cần giữ | Spring AI representation |
-|---|---|
-| Ranh giới và role của từng message | `List<Message>`, `SystemMessage`, `UserMessage`, `AssistantMessage`, `ToolResponseMessage` |
-| Text và multimodal content | Message text cùng `Media`/`MediaContent` |
-| Generation controls | `ChatOptions` |
-| Một hoặc nhiều kết quả | `ChatResponse.getResults(): List<Generation>` |
-| Generated text/media | `Generation.getOutput(): AssistantMessage` |
-| Yêu cầu gọi tool | `AssistantMessage.ToolCall` |
-| Token usage, model ID, rate limit | `ChatResponseMetadata` |
-| Finish reason và metadata của từng candidate | `ChatGenerationMetadata` |
+| Semantic cần giữ                             | Spring AI representation                                                                   |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Ranh giới và role của từng message           | `List<Message>`, `SystemMessage`, `UserMessage`, `AssistantMessage`, `ToolResponseMessage` |
+| Text và multimodal content                   | Message text cùng `Media`/`MediaContent`                                                   |
+| Generation controls                          | `ChatOptions`                                                                              |
+| Một hoặc nhiều kết quả                       | `ChatResponse.getResults(): List<Generation>`                                              |
+| Generated text/media                         | `Generation.getOutput(): AssistantMessage`                                                 |
+| Yêu cầu gọi tool                             | `AssistantMessage.ToolCall`                                                                |
+| Token usage, model ID, rate limit            | `ChatResponseMetadata`                                                                     |
+| Finish reason và metadata của từng candidate | `ChatGenerationMetadata`                                                                   |
 
 Nhờ đó, advisor có thể bổ sung messages, tool infrastructure có thể đọc tool
 calls, observability có thể đọc token usage và application có thể xử lý nhiều
@@ -911,11 +911,11 @@ Application chỉ cần biết semantic chung: chọn model, giới hạn số t
 điều chỉnh mức độ ngẫu nhiên. Khi request đi xuống provider adapter, cùng những
 semantic đó được dịch sang native request tương ứng:
 
-| Semantic trong core | `OpenAiChatModel` | `AnthropicChatModel` |
-|---|---|---|
-| `ChatOptions.getModel()` | Gọi OpenAI request builder `.model(...)` | Gọi Anthropic request builder `.model(...)` |
-| `ChatOptions.getMaxTokens()` | Gọi `.maxTokens(...)` | Gọi `.maxTokens(...)` |
-| `ChatOptions.getTemperature()` | Gọi `.temperature(...)` | Gọi `.temperature(...)` |
+| Semantic trong core            | `OpenAiChatModel`                        | `AnthropicChatModel`                        |
+| ------------------------------ | ---------------------------------------- | ------------------------------------------- |
+| `ChatOptions.getModel()`       | Gọi OpenAI request builder `.model(...)` | Gọi Anthropic request builder `.model(...)` |
+| `ChatOptions.getMaxTokens()`   | Gọi `.maxTokens(...)`                    | Gọi `.maxTokens(...)`                       |
+| `ChatOptions.getTemperature()` | Gọi `.temperature(...)`                  | Gọi `.temperature(...)`                     |
 
 Có thể thấy việc mapping này trong
 [`OpenAiChatModel`](../../../models/spring-ai-openai/src/main/java/org/springframework/ai/openai/OpenAiChatModel.java)
@@ -937,14 +937,14 @@ model trong configuration.
 Hai provider có nhiều capability không thể biểu diễn trung thực bằng
 `ChatOptions` chung:
 
-| Provider | Capability cụ thể | Spring AI đặt ở đâu? |
-|---|---|---|
-| OpenAI | Trả về log probability của token | `OpenAiChatOptions.logprobs` và `topLogprobs` |
-| OpenAI | Sinh audio cùng response | `OpenAiChatOptions.outputModalities` và `outputAudio` |
-| OpenAI | Chọn mức reasoning bằng một giá trị như `"high"` | `OpenAiChatOptions.reasoningEffort` |
+| Provider  | Capability cụ thể                                       | Spring AI đặt ở đâu?                                                                               |
+| --------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| OpenAI    | Trả về log probability của token                        | `OpenAiChatOptions.logprobs` và `topLogprobs`                                                      |
+| OpenAI    | Sinh audio cùng response                                | `OpenAiChatOptions.outputModalities` và `outputAudio`                                              |
+| OpenAI    | Chọn mức reasoning bằng một giá trị như `"high"`        | `OpenAiChatOptions.reasoningEffort`                                                                |
 | Anthropic | Extended thinking với token budget hoặc chế độ adaptive | `AnthropicChatOptions.thinking` và các builder method `thinkingEnabled(...)`, `thinkingAdaptive()` |
-| Anthropic | Prompt caching | `AnthropicChatOptions.cacheOptions` |
-| Anthropic | Built-in web search và citations | `AnthropicChatOptions.webSearchTool` và `citationDocuments` |
+| Anthropic | Prompt caching                                          | `AnthropicChatOptions.cacheOptions`                                                                |
+| Anthropic | Built-in web search và citations                        | `AnthropicChatOptions.webSearchTool` và `citationDocuments`                                        |
 
 Vì vậy, khi application chọn sử dụng capability riêng, nó chủ động sử dụng
 provider-specific type:
@@ -990,13 +990,13 @@ có các field có kiểu rõ ràng cho semantic chung như `id`, `model`, `usag
 `rateLimit`. Sau khi điền phần chung đó, mỗi adapter có thể giữ thêm dữ liệu
 native bằng `keyValue(...)`:
 
-| Adapter | Metadata được giữ bằng extension | Vì sao chưa trở thành core field? |
-|---|---|---|
-| OpenAI | `"created"` | Không phải mọi provider đều trả về cùng timestamp với cùng semantic |
-| OpenAI | Các entry từ `ChatCompletion._additionalProperties()` | Đây là các field native bổ sung, Spring AI không thể biết trước tên và kiểu |
-| Anthropic | `"anthropic-response"` chứa native `Message` | Đây là escape hatch dành riêng cho Anthropic |
-| Anthropic | `"citations"`, `"citationCount"` | Chỉ xuất hiện khi Anthropic trả về citation blocks |
-| Anthropic | `"web-search-results"` | Gắn với built-in web search của Anthropic |
+| Adapter   | Metadata được giữ bằng extension                      | Vì sao chưa trở thành core field?                                           |
+| --------- | ----------------------------------------------------- | --------------------------------------------------------------------------- |
+| OpenAI    | `"created"`                                           | Không phải mọi provider đều trả về cùng timestamp với cùng semantic         |
+| OpenAI    | Các entry từ `ChatCompletion._additionalProperties()` | Đây là các field native bổ sung, Spring AI không thể biết trước tên và kiểu |
+| Anthropic | `"anthropic-response"` chứa native `Message`          | Đây là escape hatch dành riêng cho Anthropic                                |
+| Anthropic | `"citations"`, `"citationCount"`                      | Chỉ xuất hiện khi Anthropic trả về citation blocks                          |
+| Anthropic | `"web-search-results"`                                | Gắn với built-in web search của Anthropic                                   |
 
 Trong `OpenAiChatModel`, adapter tạo metadata chung rồi gọi
 `keyValue("created", ...)`; nó còn duyệt `_additionalProperties()` để bảo toàn
@@ -1054,13 +1054,13 @@ Class diagram trên mô tả **cấu trúc object model**, không mô tả thứ
 
 Ý nghĩa cụ thể của từng quan hệ UML:
 
-| Quan hệ trong sơ đồ | Cách đọc | Ý nghĩa trong Spring AI |
-|---|---|---|
-| `ChatModel ..> Prompt : accepts` | `ChatModel` phụ thuộc vào `Prompt` | Cả `call(Prompt)` và `stream(Prompt)` đều nhận `Prompt` làm input |
-| `ChatModel ..> ChatResponse : returns` | `ChatModel` phụ thuộc vào `ChatResponse` | `call(...)` trả về một `ChatResponse`; `stream(...)` phát các `ChatResponse` qua `Flux` |
-| `ChatResponse o-- "0..*" Generation` | `ChatResponse` tập hợp nhiều `Generation` | Provider có thể trả về không có candidate hoặc nhiều candidate; `getResults()` trả về toàn bộ danh sách |
-| `ChatResponse o-- "1" ChatResponseMetadata` | Mỗi response giữ một metadata object | Metadata mô tả toàn bộ provider call, chẳng hạn model, token usage và rate limit |
-| `Generation o-- "1" AssistantMessage` | Mỗi candidate giữ một output message | `Generation.getOutput()` trả về `AssistantMessage` chứa text, media hoặc tool calls |
+| Quan hệ trong sơ đồ                         | Cách đọc                                  | Ý nghĩa trong Spring AI                                                                                 |
+| ------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `ChatModel ..> Prompt : accepts`            | `ChatModel` phụ thuộc vào `Prompt`        | Cả `call(Prompt)` và `stream(Prompt)` đều nhận `Prompt` làm input                                       |
+| `ChatModel ..> ChatResponse : returns`      | `ChatModel` phụ thuộc vào `ChatResponse`  | `call(...)` trả về một `ChatResponse`; `stream(...)` phát các `ChatResponse` qua `Flux`                 |
+| `ChatResponse o-- "0..*" Generation`        | `ChatResponse` tập hợp nhiều `Generation` | Provider có thể trả về không có candidate hoặc nhiều candidate; `getResults()` trả về toàn bộ danh sách |
+| `ChatResponse o-- "1" ChatResponseMetadata` | Mỗi response giữ một metadata object      | Metadata mô tả toàn bộ provider call, chẳng hạn model, token usage và rate limit                        |
+| `Generation o-- "1" AssistantMessage`       | Mỗi candidate giữ một output message      | `Generation.getOutput()` trả về `AssistantMessage` chứa text, media hoặc tool calls                     |
 
 Hai ký hiệu cần phân biệt:
 
@@ -1582,15 +1582,15 @@ có thể đọc messages từ `Prompt` để logging. Cùng một observation c
 
 ### Mỗi concern bám vào boundary theo một cách khác nhau
 
-| Concern | Điểm bám trong thiết kế | Lợi ích của contract chung |
-|---|---|---|
-| Metrics và token usage | Observation handler đọc `ChatResponse.getMetadata().getUsage()` | Không phải parse native usage DTO của từng provider |
-| Tracing | Observation bao quanh một logical `call`/`stream` operation | Trace có vocabulary chung như operation type, provider và model |
-| Logging | Handler đọc canonical `Prompt` hoặc `ChatResponse` | Một logging policy có thể dùng cho nhiều provider |
-| Advisors | `ChatClient` dựng advisor chain trước khi đi đến model call | Memory, RAG hoặc guardrail không phải tích hợp lại với từng SDK |
-| Testing | Test thay concrete provider bean bằng một `ChatModel` fake/mock | Business test không cần API key, network hoặc native provider DTO |
-| Dependency injection | Service phụ thuộc `ChatModel`; auto-configuration cung cấp implementation | Đổi provider chủ yếu là đổi dependency, properties và wiring |
-| Retry | Provider integration/transport áp dụng retry quanh native invocation | Có một logical model operation để cấu hình và quan sát retry, nhưng policy vẫn có thể khác theo provider và sync/stream |
+| Concern                | Điểm bám trong thiết kế                                                   | Lợi ích của contract chung                                                                                              |
+| ---------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Metrics và token usage | Observation handler đọc `ChatResponse.getMetadata().getUsage()`           | Không phải parse native usage DTO của từng provider                                                                     |
+| Tracing                | Observation bao quanh một logical `call`/`stream` operation               | Trace có vocabulary chung như operation type, provider và model                                                         |
+| Logging                | Handler đọc canonical `Prompt` hoặc `ChatResponse`                        | Một logging policy có thể dùng cho nhiều provider                                                                       |
+| Advisors               | `ChatClient` dựng advisor chain trước khi đi đến model call               | Memory, RAG hoặc guardrail không phải tích hợp lại với từng SDK                                                         |
+| Testing                | Test thay concrete provider bean bằng một `ChatModel` fake/mock           | Business test không cần API key, network hoặc native provider DTO                                                       |
+| Dependency injection   | Service phụ thuộc `ChatModel`; auto-configuration cung cấp implementation | Đổi provider chủ yếu là đổi dependency, properties và wiring                                                            |
+| Retry                  | Provider integration/transport áp dụng retry quanh native invocation      | Có một logical model operation để cấu hình và quan sát retry, nhưng policy vẫn có thể khác theo provider và sync/stream |
 
 Retry cần được hiểu cẩn thận: có boundary chung **không có nghĩa** Spring AI nên
 đặt một retry implementation duy nhất trong `ChatModel` interface. Provider có
@@ -1686,11 +1686,11 @@ Ta nên tránh hiểu “portable” quá mức.
 
 Có ba cấp portability:
 
-| Cấp | Ý nghĩa | Spring AI có thể cung cấp? |
-|---|---|---|
-| Source portability | Application vẫn gọi cùng một Java interface | Có |
-| Wiring portability | Đổi implementation qua dependency/configuration | Phần lớn có |
-| Behavioral portability | Model mới trả kết quả tương đương model cũ | Không thể đảm bảo |
+| Cấp                    | Ý nghĩa                                         | Spring AI có thể cung cấp? |
+| ---------------------- | ----------------------------------------------- | -------------------------- |
+| Source portability     | Application vẫn gọi cùng một Java interface     | Có                         |
+| Wiring portability     | Đổi implementation qua dependency/configuration | Phần lớn có                |
+| Behavioral portability | Model mới trả kết quả tương đương model cũ      | Không thể đảm bảo          |
 
 Hai model khác nhau vẫn có thể:
 
@@ -1737,30 +1737,5 @@ flowchart TD
 Luận điểm cốt lõi của phần 1 là:
 
 > `ChatModel` tồn tại vì “provider integration” là phần biến động, còn “application cần gọi một chat model” là nhu cầu tương đối ổn định.
-
-</details>
-
----
-
-<details>
-<summary><strong>Câu hỏi thảo luận</strong></summary>
-
-Giả sử bạn tự thiết kế framework trước khi biết Spring AI. Có hai lựa chọn:
-
-```java
-interface ChatModel {
-    String call(String input);
-}
-```
-
-và:
-
-```java
-interface ChatModel {
-    ChatResponse call(Prompt input);
-}
-```
-
-Theo bạn, ba loại thông tin quan trọng nhất bị mất trong thiết kế `String → String` là gì? Từ câu trả lời đó, ta sẽ kiểm tra xem ranh giới mà Spring AI chọn có hợp lý hay đang over-engineering.
 
 </details>

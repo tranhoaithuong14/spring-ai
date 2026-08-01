@@ -6,7 +6,8 @@
 
 Đây là phân biệt rất quan trọng.
 
-## 1. Mục tiêu chính thức của Spring AI
+<details open>
+<summary><strong>1. Mục tiêu chính thức của Spring AI</strong></summary>
 
 README của dự án nêu ba nguyên tắc:
 
@@ -100,9 +101,12 @@ Xem [`chatmodel.adoc`, dòng 8–12](../../../spring-ai-docs/src/main/antora/mod
 
 Đây chưa phải một PRD hoàn chỉnh. Nhưng từ mục tiêu này và source code hiện tại, ta có thể tái dựng các architectural requirements.
 
+</details>
+
 ---
 
-## 2. Hãy hình dung Spring AI chưa tồn tại
+<details>
+<summary><strong>2. Hãy hình dung Spring AI chưa tồn tại</strong></summary>
 
 Giả sử application gọi trực tiếp OpenAI SDK:
 
@@ -165,9 +169,12 @@ Protocol và data model A → protocol và data model B
 
 Khác biệt có tính **semantic**, không chỉ có tính transport.
 
+</details>
+
 ---
 
-## 3. Điều gì ổn định và điều gì thường thay đổi?
+<details>
+<summary><strong>3. Điều gì ổn định và điều gì thường thay đổi?</strong></summary>
 
 Một abstraction tốt thường được đặt quanh “trục biến động”.
 
@@ -203,9 +210,12 @@ Application muốn làm những việc như:
 
 Ranh giới kiến trúc cần ngăn nhóm thứ hai lan vào nhóm thứ nhất.
 
+</details>
+
 ---
 
-## 4. Yêu cầu số 1: application phải có một contract ổn định
+<details>
+<summary><strong>4. Yêu cầu số 1: application phải có một contract ổn định</strong></summary>
 
 Application không nên phụ thuộc trực tiếp vào `OpenAIClient`:
 
@@ -261,9 +271,12 @@ Nhưng nguyên nhân sâu hơn pattern là:
 
 > Provider là dependency có khả năng thay đổi, nên sự thay đổi đó phải được cô lập phía sau một contract ổn định.
 
+</details>
+
 ---
 
-## 5. Yêu cầu số 2: portability không được làm mất cấu trúc của cuộc hội thoại
+<details>
+<summary><strong>5. Yêu cầu số 2: portability không được làm mất cấu trúc của cuộc hội thoại</strong></summary>
 
 Cách đơn giản nhất có vẻ là:
 
@@ -315,9 +328,12 @@ Generations + metadata
 
 Đây là lý do tài liệu nói `Prompt` và `ChatResponse` “unify the communication” đồng thời xử lý độ phức tạp của việc chuẩn bị request và parse response tại [`chatmodel.adoc`, dòng 11–12](../../../spring-ai-docs/src/main/antora/modules/ROOT/pages/api/chatmodel.adoc).
 
+</details>
+
 ---
 
-## 6. Yêu cầu số 3: abstraction chung nhưng không được khóa mất tính năng riêng
+<details>
+<summary><strong>6. Yêu cầu số 3: abstraction chung nhưng không được khóa mất tính năng riêng</strong></summary>
 
 Đây là mâu thuẫn khó nhất:
 
@@ -379,9 +395,12 @@ OpenAiChatOptions options; // nhiều capability hơn
 
 Sử dụng provider-specific options không phải framework thất bại. Nó là một escape hatch có chủ đích.
 
+</details>
+
 ---
 
-## 7. Yêu cầu số 4: hỗ trợ nhiều model type nhưng không gom chúng thành một API vô nghĩa
+<details>
+<summary><strong>7. Yêu cầu số 4: hỗ trợ nhiều model type nhưng không gom chúng thành một API vô nghĩa</strong></summary>
 
 Chat generation không phải loại AI operation duy nhất. Spring AI còn có:
 
@@ -433,9 +452,12 @@ Ta chưa phân tích hierarchy ở đây—đó là phần 2. Hiện tại chỉ
 
 > Chia sẻ cấu trúc chung, nhưng vẫn giữ type riêng cho từng loại model.
 
+</details>
+
 ---
 
-## 8. Yêu cầu số 5: synchronous và streaming phải cùng một model semantic
+<details>
+<summary><strong>8. Yêu cầu số 5: synchronous và streaming phải cùng một model semantic</strong></summary>
 
 Có hai cách nhận kết quả:
 
@@ -474,9 +496,12 @@ Như vậy:
 
 README liệt kê rõ portable API phải hỗ trợ cả synchronous và streaming tại [`README.md`, dòng 45–46](../../../README.md).
 
+</details>
+
 ---
 
-## 9. Yêu cầu số 6: provider mới phải có một “contribution contract”
+<details>
+<summary><strong>9. Yêu cầu số 6: provider mới phải có một “contribution contract”</strong></summary>
 
 Spring AI là framework mở. Vấn đề không chỉ là hỗ trợ các provider hiện có.
 
@@ -504,9 +529,12 @@ Vì vậy `ChatModel` đồng thời là:
 
 Tài liệu dự án gọi các abstraction này là nền tảng có nhiều implementation, cho phép thay component với ít thay đổi code tại [`index.adoc`, dòng 15–16](../../../spring-ai-docs/src/main/antora/modules/ROOT/pages/index.adoc).
 
+</details>
+
 ---
 
-## 10. Yêu cầu số 7: cross-cutting concerns phải có điểm bám chung
+<details>
+<summary><strong>10. Yêu cầu số 7: cross-cutting concerns phải có điểm bám chung</strong></summary>
 
 Enterprise application còn cần:
 
@@ -534,9 +562,12 @@ metrics ─── ChatModel ─── testing
 
 Điều này không có nghĩa mọi cross-cutting concern đều được implement ngay trong interface. Ý nghĩa là framework có một model-operation boundary thống nhất để áp dụng chúng.
 
+</details>
+
 ---
 
-## 11. Những phương án Spring AI đã không chọn
+<details>
+<summary><strong>11. Những phương án Spring AI đã không chọn</strong></summary>
 
 ### Một HTTP wrapper chung
 
@@ -569,9 +600,12 @@ Sẽ trộn hai trách nhiệm:
 
 Vì thế `ChatModel` và `ChatClient` cần tồn tại ở hai tầng khác nhau.
 
+</details>
+
 ---
 
-## 12. Portability thực sự có nghĩa gì?
+<details>
+<summary><strong>12. Portability thực sự có nghĩa gì?</strong></summary>
 
 Ta nên tránh hiểu “portable” quá mức.
 
@@ -598,9 +632,12 @@ Vì vậy:
 
 “Đổi provider với minimal code changes” không có nghĩa “đổi provider mà hệ thống vẫn hành xử y hệt”.
 
+</details>
+
 ---
 
-## 13. Tóm lại: chuỗi suy luận dẫn đến `ChatModel`
+<details>
+<summary><strong>13. Tóm lại: chuỗi suy luận dẫn đến <code>ChatModel</code></strong></summary>
 
 ```text
 Nhiều provider có API và data model khác nhau
@@ -624,7 +661,12 @@ Luận điểm cốt lõi của phần 1 là:
 
 > `ChatModel` tồn tại vì “provider integration” là phần biến động, còn “application cần gọi một chat model” là nhu cầu tương đối ổn định.
 
-## Câu hỏi thảo luận
+</details>
+
+---
+
+<details>
+<summary><strong>Câu hỏi thảo luận</strong></summary>
 
 Giả sử bạn tự thiết kế framework trước khi biết Spring AI. Có hai lựa chọn:
 
@@ -643,3 +685,5 @@ interface ChatModel {
 ```
 
 Theo bạn, ba loại thông tin quan trọng nhất bị mất trong thiết kế `String → String` là gì? Từ câu trả lời đó, ta sẽ kiểm tra xem ranh giới mà Spring AI chọn có hợp lý hay đang over-engineering.
+
+</details>

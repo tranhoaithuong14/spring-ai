@@ -10,9 +10,85 @@
 
 README của dự án nêu ba nguyên tắc:
 
-- Portability.
-- Modular design.
-- Strongly typed data structures và APIs.
+- **Portability**: code nghiệp vụ tương tác với AI thông qua abstraction chung của
+  Spring AI, thay vì phụ thuộc trực tiếp vào SDK và kiểu dữ liệu của một provider.
+  Nhờ đó, application có thể chuyển từ OpenAI sang Anthropic, Ollama hoặc một
+  provider khác với ít thay đổi code nhất có thể.
+- **Modular design**: phần API chung và phần tích hợp từng provider được chia thành
+  các module có trách nhiệm riêng. Application chỉ cần đưa những module phù hợp
+  vào dependency graph của mình.
+- **Strongly typed data structures và APIs**: request, response, message, options
+  và metadata được biểu diễn bằng Java types thay vì dùng `String`, `Map` hoặc
+  JSON không có contract ở mọi nơi.
+
+### `Portability` cụ thể có nghĩa là gì?
+
+Trong ngữ cảnh Spring AI, `portability` có thể hiểu là **khả năng mang phần lớn
+application code từ provider này sang provider khác mà không phải viết lại phần
+nghiệp vụ**.
+
+Nếu application phụ thuộc trực tiếp vào OpenAI SDK:
+
+```java
+class CustomerSupportService {
+    private final OpenAIClient client;
+}
+```
+
+thì `CustomerSupportService` chỉ hoạt động với OpenAI. Đổi sang Anthropic đồng
+nghĩa với việc sửa dependency, request types, response types và logic gọi SDK
+ngay trong service.
+
+Nếu application phụ thuộc vào abstraction chung:
+
+```java
+class CustomerSupportService {
+    private final ChatModel chatModel;
+}
+```
+
+thì service chỉ tuyên bố rằng nó cần khả năng gọi một chat model. OpenAI,
+Anthropic hay Ollama là implementation được nối vào phía sau `ChatModel`. Khi
+đổi provider, phần thường phải thay là dependency, configuration và bean wiring;
+logic chính của `CustomerSupportService` có thể được giữ lại.
+
+Ta có thể hình dung:
+
+```text
+Không portable:
+
+CustomerSupportService → OpenAI SDK
+
+Portable qua Spring AI:
+
+                           ┌→ OpenAI adapter → OpenAI SDK
+CustomerSupportService → ChatModel
+                           ├→ Anthropic adapter → Anthropic SDK
+                           └→ Ollama adapter → Ollama API
+```
+
+Như vậy, thứ được làm cho portable chủ yếu là **integration contract của
+application**:
+
+- Cách application gửi một model request.
+- Cách application nhận model response.
+- Cách biểu diễn những capability chung như messages, generation options và
+  usage metadata.
+- Cách application phụ thuộc vào model thông qua Spring dependency injection.
+
+`Portability` không có nghĩa là mọi provider có tính năng giống nhau hoặc sẽ trả
+về câu trả lời giống nhau. Nó cũng không đảm bảo việc đổi provider luôn chỉ cần
+thay một dòng configuration. Nếu application sử dụng capability riêng của
+OpenAI, phần code đó vẫn phụ thuộc OpenAI và có thể phải thay khi chuyển provider.
+
+Do đó, cách hiểu chính xác là:
+
+> Spring AI làm cho code tích hợp với model có khả năng chuyển đổi provider với
+> ít thay đổi nhất có thể; nó không làm cho các model trở nên tương đương về tính
+> năng và hành vi.
+
+Phần 12 sẽ phân biệt kỹ hơn ba cấp độ: source portability, wiring portability và
+behavioral portability.
 
 Xem [`README.md`, dòng 3–5](../../../README.md).
 

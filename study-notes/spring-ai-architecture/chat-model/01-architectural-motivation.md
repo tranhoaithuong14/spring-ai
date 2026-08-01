@@ -250,6 +250,27 @@ Giả sử application gọi trực tiếp OpenAI SDK. Ví dụ sau được rú
 bật coupling; phần backoff, logging và tool schema đầy đủ được lược bỏ:
 
 ```java
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
+
+import com.openai.client.OpenAIClient;
+import com.openai.client.OpenAIClientAsync;
+import com.openai.core.JsonValue;
+import com.openai.errors.InternalServerException;
+import com.openai.errors.OpenAIRetryableException;
+import com.openai.errors.RateLimitException;
+import com.openai.models.FunctionDefinition;
+import com.openai.models.FunctionParameters;
+import com.openai.models.chat.completions.ChatCompletion;
+import com.openai.models.chat.completions.ChatCompletionChunk;
+import com.openai.models.chat.completions.ChatCompletionCreateParams;
+import com.openai.models.chat.completions.ChatCompletionFunctionTool;
+import com.openai.models.chat.completions.ChatCompletionMessage;
+import com.openai.models.chat.completions.ChatCompletionMessageToolCall;
+import com.openai.models.chat.completions.ChatCompletionTool;
+import com.openai.models.completions.CompletionUsage;
+
 class CustomerSupportService {
 
     // Application phụ thuộc cả synchronous và asynchronous client của OpenAI.
@@ -384,7 +405,7 @@ phụ thuộc vào vocabulary của OpenAI:
   và `Delta`; application còn phải tự ghép các partial tool-call chunks.
 - **Exception và retry semantics**: retry policy phải hiểu
   `RateLimitException`, `InternalServerException`, `OpenAIRetryableException`
-  và các `OpenAIException` khác.
+  và các `OpenAIException` khác trong package `com.openai.errors`.
 
 Độ dài của ví dụ không phải do logic nghiệp vụ customer support phức tạp. Phần
 lớn code tồn tại vì application đang tự làm công việc của một provider adapter.

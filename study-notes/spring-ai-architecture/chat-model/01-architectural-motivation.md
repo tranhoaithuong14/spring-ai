@@ -889,13 +889,127 @@ generation mà không import provider DTO.
 Nếu canonical model cố chứa hợp của toàn bộ provider fields, nó sẽ trở thành một
 universal DTO khổng lồ và lại bị provider details chi phối.
 
-Spring AI dùng ba nguyên tắc phân ranh giới:
+Spring AI dùng ba nguyên tắc phân ranh giới. Có thể kiểm chứng từng nguyên tắc
+ngay trong implementation của OpenAI và Anthropic.
 
-1. Semantic ổn định và phổ biến giữa nhiều provider được đưa vào core model.
-2. Capability riêng được giữ trong provider-specific options hoặc provider
-   module.
-3. Metadata không đủ phổ quát có thể đi qua extension/key-value metadata thay vì
-   trở thành field bắt buộc của mọi response.
+##### 1. Semantic ổn định và phổ biến được đưa vào core model
+
+Ví dụ rõ nhất là `model`, `maxTokens` và `temperature`. Cả ba được khai báo trên
+interface chung [`ChatOptions`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/prompt/ChatOptions.java):
+
+```java
+import org.springframework.ai.chat.prompt.ChatOptions;
+
+ChatOptions options = ChatOptions.builder()
+    .model("provider-model-name")
+    .maxTokens(1_000)
+    .temperature(0.2)
+    .build();
+```
+
+Application chỉ cần biết semantic chung: chọn model, giới hạn số token output và
+điều chỉnh mức độ ngẫu nhiên. Khi request đi xuống provider adapter, cùng những
+semantic đó được dịch sang native request tương ứng:
+
+| Semantic trong core | `OpenAiChatModel` | `AnthropicChatModel` |
+|---|---|---|
+| `ChatOptions.getModel()` | Gọi OpenAI request builder `.model(...)` | Gọi Anthropic request builder `.model(...)` |
+| `ChatOptions.getMaxTokens()` | Gọi `.maxTokens(...)` | Gọi `.maxTokens(...)` |
+| `ChatOptions.getTemperature()` | Gọi `.temperature(...)` | Gọi `.temperature(...)` |
+
+Có thể thấy việc mapping này trong
+[`OpenAiChatModel`](../../../models/spring-ai-openai/src/main/java/org/springframework/ai/openai/OpenAiChatModel.java)
+và
+[`AnthropicChatModel`](../../../models/spring-ai-anthropic/src/main/java/org/springframework/ai/anthropic/AnthropicChatModel.java).
+
+Đây là lý do chúng xứng đáng nằm trong core: upper layer có thể đọc, ghi và
+truyền các option đó bằng một contract có kiểu rõ ràng mà không cần import SDK
+của OpenAI hay Anthropic.
+
+Tuy nhiên, **semantic của option portable không đồng nghĩa mọi giá trị của nó
+đều portable**. Field `model` là khái niệm chung, nhưng tên như `gpt-...` và
+`claude-...` vẫn là giá trị riêng của từng provider. Khi đổi provider,
+application có thể giữ cấu trúc `ChatOptions`, nhưng thường vẫn phải đổi giá trị
+model trong configuration.
+
+##### 2. Capability riêng được giữ trong provider-specific options/module
+
+Hai provider có nhiều capability không thể biểu diễn trung thực bằng
+`ChatOptions` chung:
+
+| Provider | Capability cụ thể | Spring AI đặt ở đâu? |
+|---|---|---|
+| OpenAI | Trả về log probability của token | `OpenAiChatOptions.logprobs` và `topLogprobs` |
+| OpenAI | Sinh audio cùng response | `OpenAiChatOptions.outputModalities` và `outputAudio` |
+| OpenAI | Chọn mức reasoning bằng một giá trị như `"high"` | `OpenAiChatOptions.reasoningEffort` |
+| Anthropic | Extended thinking với token budget hoặc chế độ adaptive | `AnthropicChatOptions.thinking` và các builder method `thinkingEnabled(...)`, `thinkingAdaptive()` |
+| Anthropic | Prompt caching | `AnthropicChatOptions.cacheOptions` |
+| Anthropic | Built-in web search và citations | `AnthropicChatOptions.webSearchTool` và `citationDocuments` |
+
+Vì vậy, khi application chọn sử dụng capability riêng, nó chủ động sử dụng
+provider-specific type:
+
+```java
+import org.springframework.ai.anthropic.AnthropicChatOptions;
+import org.springframework.ai.openai.OpenAiChatOptions;
+
+OpenAiChatOptions openAiOptions = OpenAiChatOptions.builder()
+    .logprobs(true)
+    .topLogprobs(5)
+    .reasoningEffort("high")
+    .build();
+
+AnthropicChatOptions anthropicOptions = AnthropicChatOptions.builder()
+    .maxTokens(8_000)
+    .thinkingEnabled(4_096)
+    .build();
+```
+
+Các field và builder trên nằm trong
+[`OpenAiChatOptions`](../../../models/spring-ai-openai/src/main/java/org/springframework/ai/openai/OpenAiChatOptions.java)
+và
+[`AnthropicChatOptions`](../../../models/spring-ai-anthropic/src/main/java/org/springframework/ai/anthropic/AnthropicChatOptions.java),
+không nằm trong `ChatOptions`.
+
+Trường hợp reasoning/thinking đặc biệt quan trọng. Nhìn ở mức business, cả hai
+đều liên quan đến việc model “suy luận”. Nhưng contract native không tương đương:
+
+- OpenAI biểu diễn lựa chọn này bằng `reasoningEffort`.
+- Anthropic dùng `ThinkingConfigParam`, có token budget, adaptive mode và cách
+  hiển thị thinking content.
+
+Nếu core vội tạo một field chung như `ChatOptions.reasoning`, field đó sẽ hoặc
+làm mất semantic của Anthropic, hoặc phải chứa một tập hợp option phụ thuộc
+provider. Vì vậy, **tên khái niệm gần giống chưa đủ chứng minh semantic đã ổn
+định và portable**.
+
+##### 3. Metadata chưa đủ phổ quát đi qua key-value extension
+
+[`ChatResponseMetadata`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/metadata/ChatResponseMetadata.java)
+có các field có kiểu rõ ràng cho semantic chung như `id`, `model`, `usage` và
+`rateLimit`. Sau khi điền phần chung đó, mỗi adapter có thể giữ thêm dữ liệu
+native bằng `keyValue(...)`:
+
+| Adapter | Metadata được giữ bằng extension | Vì sao chưa trở thành core field? |
+|---|---|---|
+| OpenAI | `"created"` | Không phải mọi provider đều trả về cùng timestamp với cùng semantic |
+| OpenAI | Các entry từ `ChatCompletion._additionalProperties()` | Đây là các field native bổ sung, Spring AI không thể biết trước tên và kiểu |
+| Anthropic | `"anthropic-response"` chứa native `Message` | Đây là escape hatch dành riêng cho Anthropic |
+| Anthropic | `"citations"`, `"citationCount"` | Chỉ xuất hiện khi Anthropic trả về citation blocks |
+| Anthropic | `"web-search-results"` | Gắn với built-in web search của Anthropic |
+
+Trong `OpenAiChatModel`, adapter tạo metadata chung rồi gọi
+`keyValue("created", ...)`; nó còn duyệt `_additionalProperties()` để bảo toàn
+các field OpenAI bổ sung. Trong `AnthropicChatModel`, adapter tạo cùng loại
+`ChatResponseMetadata`, sau đó lưu native response, citations và web-search
+results bằng các key riêng.
+
+Giả sử core thêm field bắt buộc `List<Citation> citations` chỉ vì Anthropic có
+citations. Mọi `ChatResponse` của OpenAI và các provider không hỗ trợ capability
+này sẽ phải mang một field không có ý nghĩa. Ngược lại, nếu bỏ citations khi map
+sang model chung, application cần chúng sẽ bị mất dữ liệu. Key-value metadata là
+điểm cân bằng: **core model vẫn gọn và ổn định, nhưng provider adapter không phải
+vứt bỏ dữ liệu native**.
 
 Do đó, “đủ giàu” có nghĩa là **đủ để không làm mất những semantic chung mà các
 feature phía trên cần**, chứ không phải đủ để thay thế hoàn toàn mọi native SDK

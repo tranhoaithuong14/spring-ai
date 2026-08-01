@@ -143,6 +143,94 @@ Do đó, cách hiểu chính xác là:
 Phần 12 sẽ phân biệt kỹ hơn ba cấp độ: source portability, wiring portability và
 behavioral portability.
 
+### `Modular design` cụ thể có nghĩa là gì?
+
+Trong Spring AI, `modular design` có nghĩa là framework được chia thành các
+**build module có trách nhiệm và dependency boundary rõ ràng**, thay vì đặt API
+chung, provider SDK, auto-configuration và API cấp cao vào cùng một artifact.
+
+Từ `module` ở đây chủ yếu nói về Maven/Gradle artifact và source module của dự
+án; nó không có nghĩa Spring AI bắt buộc phải sử dụng Java Platform Module System
+hay `module-info.java`.
+
+Một số module tiêu biểu:
+
+| Nhóm module | Trách nhiệm | Ví dụ |
+|---|---|---|
+| Core model | Chứa abstraction và canonical types chung | [`spring-ai-model`](../../../spring-ai-model) |
+| High-level client | Cung cấp fluent API và orchestration phía trên model | [`spring-ai-client-chat`](../../../spring-ai-client-chat) |
+| Provider adapter | Chuyển đổi giữa Spring AI types và SDK/API của từng provider | [`spring-ai-openai`](../../../models/spring-ai-openai), [`spring-ai-anthropic`](../../../models/spring-ai-anthropic) |
+| Auto-configuration | Tạo bean và wiring provider vào Spring Boot application | [`spring-ai-autoconfigure-model-openai`](../../../auto-configurations/models/spring-ai-autoconfigure-model-openai) |
+
+Dependency giữa các module đi theo hướng vào abstraction ổn định:
+
+```mermaid
+flowchart TD
+    application[Application]
+    chatClient[spring-ai-client-chat]
+    core[spring-ai-model]
+    openAiAuto[spring-ai-autoconfigure-model-openai]
+    openAi[spring-ai-openai]
+    anthropic[spring-ai-anthropic]
+    ollama[spring-ai-ollama]
+
+    application --> chatClient
+    application --> openAiAuto
+
+    chatClient --> core
+    openAiAuto --> openAi
+    openAi --> core
+    anthropic --> core
+    ollama --> core
+```
+
+Mũi tên trong sơ đồ có nghĩa là “module nguồn phụ thuộc vào module đích”. Điểm
+quan trọng là các provider module phụ thuộc vào `spring-ai-model` để implement
+contract chung; `spring-ai-model` không phụ thuộc ngược lại vào OpenAI,
+Anthropic hay Ollama.
+
+Quy tắc dependency này tạo ra các lợi ích:
+
+- **Chọn đúng phần cần dùng**: application dùng OpenAI không bắt buộc phải kéo
+  Anthropic, Ollama và SDK của các provider khác vào classpath.
+- **Cô lập thay đổi**: khi OpenAI SDK thay đổi, phần mapping chủ yếu được xử lý
+  trong `spring-ai-openai` thay vì lan vào core API và application code.
+- **Tránh dependency pollution**: các SDK, HTTP client và transitive dependency
+  riêng của provider không bị gom vào một artifact khổng lồ.
+- **Mở rộng theo cùng một khuôn mẫu**: provider mới có thể được thêm dưới dạng
+  một module adapter mới phụ thuộc vào core contract.
+- **Tách optional convenience khỏi core**: Spring Boot auto-configuration giúp
+  wiring thuận tiện nhưng không phải là bản thân Model API.
+- **Có thể composition**: application có thể chọn một provider hoặc đồng thời
+  đưa nhiều provider module vào nếu use case cần nhiều `ChatModel` bean.
+
+Ví dụ, application đang dùng OpenAI có thể chọn OpenAI provider module và
+auto-configuration tương ứng. Khi chuyển sang Anthropic, phần thay đổi chủ yếu
+là provider dependency, configuration và bean selection. Service phụ thuộc vào
+`ChatModel` không cần biết provider module nào đang được sử dụng.
+
+### Modularity khác portability ở đâu?
+
+Hai mục tiêu này bổ trợ nhau nhưng không giống nhau:
+
+- **Portability** là khả năng giữ lại application code khi đổi implementation.
+- **Modularity** là khả năng đóng gói, chọn, thay thế và cô lập các
+  implementation ở cấp dependency/build artifact.
+
+`ChatModel` tạo ra polymorphism ở cấp Java type. Các provider module tạo ra sự
+cô lập ở cấp build và dependency graph.
+
+Nếu chỉ có portability mà không có modularity, application có thể gọi một
+interface chung nhưng vẫn phải mang theo một artifact chứa SDK của tất cả
+provider. Nếu chỉ có modularity mà không có `ChatModel`, mỗi provider được đóng
+gói riêng nhưng application vẫn phải viết code theo API riêng của từng module.
+
+Do đó, cách hiểu ngắn gọn là:
+
+> Portability giúp application không bị khóa vào một provider contract;
+> modularity giúp provider implementation và dependency của nó không bị trộn
+> vào phần còn lại của framework.
+
 Xem [`README.md`, dòng 3–5](../../../README.md).
 
 Tài liệu `ChatModel` diễn đạt mục tiêu cụ thể hơn:

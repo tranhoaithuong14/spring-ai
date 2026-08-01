@@ -53,20 +53,72 @@ Anthropic hay Ollama là implementation được nối vào phía sau `ChatModel
 đổi provider, phần thường phải thay là dependency, configuration và bean wiring;
 logic chính của `CustomerSupportService` có thể được giữ lại.
 
-Ta có thể hình dung:
+Ta có thể hình dung thiết kế OOP bằng UML class diagram:
 
-```text
-Không portable:
+```mermaid
+classDiagram
+    direction LR
 
-CustomerSupportService → OpenAI SDK
+    class CustomerSupportService
 
-Portable qua Spring AI:
+    class ChatModel {
+        <<interface>>
+        +call(Prompt prompt) ChatResponse
+        +stream(Prompt prompt) Flux~ChatResponse~
+    }
 
-                           ┌→ OpenAI adapter → OpenAI SDK
-CustomerSupportService → ChatModel
-                           ├→ Anthropic adapter → Anthropic SDK
-                           └→ Ollama adapter → Ollama API
+    class OpenAiChatModel {
+        <<adapter>>
+    }
+    class AnthropicChatModel {
+        <<adapter>>
+    }
+    class OllamaChatModel {
+        <<adapter>>
+    }
+
+    class OpenAIClient {
+        <<SDK>>
+    }
+    class OpenAIClientAsync {
+        <<SDK>>
+    }
+    class AnthropicClient {
+        <<SDK>>
+    }
+    class AnthropicClientAsync {
+        <<SDK>>
+    }
+    class OllamaApi {
+        <<API>>
+    }
+
+    CustomerSupportService --> "1" ChatModel : chatModel
+
+    ChatModel <|.. OpenAiChatModel : realizes
+    ChatModel <|.. AnthropicChatModel : realizes
+    ChatModel <|.. OllamaChatModel : realizes
+
+    OpenAiChatModel --> OpenAIClient : delegates call
+    OpenAiChatModel --> OpenAIClientAsync : delegates stream
+    AnthropicChatModel --> AnthropicClient : delegates call
+    AnthropicChatModel --> AnthropicClientAsync : delegates stream
+    OllamaChatModel --> OllamaApi : delegates call/stream
 ```
+
+Ý nghĩa các quan hệ UML:
+
+- `CustomerSupportService --> ChatModel` là navigable association:
+  `CustomerSupportService` giữ một reference kiểu `ChatModel`.
+- `ChatModel <|.. OpenAiChatModel` là realization: class
+  `OpenAiChatModel` implement interface `ChatModel`. Hai adapter còn lại có cùng
+  quan hệ.
+- `OpenAiChatModel --> OpenAIClient` là association/delegation: adapter chuyển
+  request của Spring AI sang lời gọi của provider client. Các provider khác có
+  cấu trúc tương tự.
+
+Điểm quan trọng của sơ đồ là `CustomerSupportService` chỉ nhìn thấy
+`ChatModel`. Nó không có association trực tiếp đến bất kỳ provider client nào.
 
 Như vậy, thứ được làm cho portable chủ yếu là **integration contract của
 application**:

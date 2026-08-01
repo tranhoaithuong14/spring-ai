@@ -465,18 +465,28 @@ abstraction cụ thể:
 
 ### Phần thay đổi theo provider
 
-- SDK và request/response classes.
-- Authentication và endpoint.
-- Role/message format.
-- Tên options và phạm vi giá trị.
-- Multimodal content format.
-- Tool schema.
-- Streaming event format.
-- Error codes và rate-limit metadata.
-- Những capability đặc biệt chỉ một số provider có.
-- Quy tắc hợp lệ của từng model.
+Spring AI không thể loại bỏ những khác biệt này. Thay vào đó, framework đặt
+chúng sau các adapter, provider module và provider-specific configuration:
+
+| Phần thay đổi theo provider | Thành phần Spring AI xử lý | Spring AI giải quyết đến mức nào? |
+|---|---|---|
+| **SDK và request/response classes** | Các implementation như [`OpenAiChatModel`](../../../models/spring-ai-openai/src/main/java/org/springframework/ai/openai/OpenAiChatModel.java), [`AnthropicChatModel`](../../../models/spring-ai-anthropic/src/main/java/org/springframework/ai/anthropic/AnthropicChatModel.java) và [`OllamaChatModel`](../../../models/spring-ai-ollama/src/main/java/org/springframework/ai/ollama/OllamaChatModel.java) đóng vai trò provider adapter. | Adapter nhận canonical `Prompt`, tạo native request, gọi SDK/API, rồi chuyển native response thành `ChatResponse`. Nhờ đó, phần lớn SDK types bị giữ trong provider module thay vì lan vào application. |
+| **Authentication và endpoint** | Provider properties và auto-configuration, chẳng hạn [`AbstractOpenAiProperties`](../../../auto-configurations/models/spring-ai-autoconfigure-model-openai/src/main/java/org/springframework/ai/model/openai/autoconfigure/AbstractOpenAiProperties.java), `OpenAiChatProperties`, `AnthropicChatProperties`, cùng các lớp setup/client builder của provider. | Spring Boot tự tạo và wiring client từ `apiKey`, credential, `baseUrl`, timeout, proxy và headers. Framework cô lập phần khởi tạo, nhưng không tạo một credential model chung: tên property và cơ chế authentication vẫn provider-specific. |
+| **Role/message format** | Core cung cấp `Message`, `SystemMessage`, `UserMessage`, `AssistantMessage` và `ToolResponseMessage`; mỗi provider adapter có conversion code như `OpenAiChatModel.createRequest(...)` hoặc `OllamaChatModel.ollamaChatRequest(...)`. | Application dùng message model chung. Adapter quyết định một Spring AI role được biểu diễn thế nào trong native protocol, hoặc phải reject/điều chỉnh nếu provider không hỗ trợ tương đương. |
+| **Tên options và phạm vi giá trị** | [`ChatOptions`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/prompt/ChatOptions.java) chứa phần portable; `OpenAiChatOptions`, `AnthropicChatOptions` và [`OllamaChatOptions`](../../../models/spring-ai-ollama/src/main/java/org/springframework/ai/ollama/api/OllamaChatOptions.java) chứa phần riêng. Adapter merge, kiểm tra và map options sang native request. | Các khái niệm chung như `temperature` được chuẩn hóa ở API level, nhưng provider vẫn có thể diễn giải giá trị khác nhau. Option không được hỗ trợ có thể bị ignore, cảnh báo hoặc reject; ví dụ OpenAI adapter cảnh báo và bỏ qua `topK`. |
+| **Multimodal content format** | [`Media`](../../../spring-ai-commons/src/main/java/org/springframework/ai/content/Media.java) và [`MediaContent`](../../../spring-ai-commons/src/main/java/org/springframework/ai/content/MediaContent.java) tạo representation chung; `UserMessage`/`AssistantMessage` mang media. Provider adapter chuyển chúng thành native image, audio hoặc file content parts. | Spring AI chuẩn hóa MIME type và data holder, nhưng adapter vẫn phải xử lý URI, base64, resource và giới hạn modality của từng model. Việc có `Media` không có nghĩa mọi provider/model đều nhận mọi media type. |
+| **Tool schema** | [`ToolDefinition`](../../../spring-ai-model/src/main/java/org/springframework/ai/tool/definition/ToolDefinition.java), `ToolCallback`, [`ToolCallingChatOptions`](../../../spring-ai-model/src/main/java/org/springframework/ai/model/tool/ToolCallingChatOptions.java) và [`ToolCallingManager`](../../../spring-ai-model/src/main/java/org/springframework/ai/model/tool/ToolCallingManager.java) định nghĩa model chung. Mỗi provider adapter chuyển definition thành native tool/function schema. | Framework chuẩn hóa định nghĩa và vòng đời tool ở phía application. Tên field, JSON Schema dialect, tool-choice mode và cách tool call xuất hiện trong native response vẫn được adapter xử lý riêng. |
+| **Streaming event format** | `ChatModel.stream(Prompt)` expose `Flux<ChatResponse>`; từng provider adapter chuyển native events/chunks sang type này. [`MessageAggregator`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/model/MessageAggregator.java) và provider-specific merger như `OpenAiChatModel.ChunkMerger` hỗ trợ ghép text/tool-call chunks. | Spring AI chuẩn hóa outer reactive contract, nhưng ranh giới chunk, thời điểm có usage, finish reason và partial tool-call data vẫn phụ thuộc provider. Adapter phải giữ state hoặc aggregate khi native protocol chia dữ liệu khác nhau. |
+| **Error codes, retry và rate-limit metadata** | Provider properties/options cấu hình timeout và `maxRetries`; SDK/setup code thực hiện request policy. [`ChatResponseMetadata`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/metadata/ChatResponseMetadata.java) expose [`RateLimit`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/metadata/RateLimit.java), với implementation như `OpenAiRateLimit` và `AnthropicRateLimit`; observation API ghi nhận operation/error. | Rate-limit data được chuẩn hóa khi provider cung cấp đủ headers/metadata, nhưng mức hỗ trợ khác nhau. Exception types chưa được hợp nhất hoàn toàn thành một taxonomy portable; SDK/provider exceptions vẫn có thể đi qua boundary và retry semantics vẫn cần provider-specific setup. |
+| **Capability chỉ một số provider có** | Provider-specific options và metadata là escape hatch. Với capability đủ phổ biến, Spring AI có thể bổ sung mixin contract như [`StructuredOutputChatOptions`](../../../spring-ai-model/src/main/java/org/springframework/ai/model/tool/StructuredOutputChatOptions.java) hoặc `ToolCallingChatOptions`. | Capability chưa phổ quát được giữ trong provider module để core không biến thành universal superset. Đổi lại, application sử dụng escape hatch sẽ chủ động chấp nhận coupling với provider. |
+| **Quy tắc hợp lệ của từng model** | Provider adapter và options builder thực hiện validation, chẳng hạn `OpenAiChatModel.verifyPromptChatOptions(...)` và `OllamaChatModel.verifyPromptChatOptions(...)`; SDK/provider tiếp tục kiểm tra các ràng buộc còn lại. | Không có một validator chung biết mọi model. Spring AI kiểm tra những invariant framework/provider adapter biết, nhưng một số lỗi chỉ xuất hiện khi SDK hoặc remote API xử lý request. |
 
 Đây là ngôn ngữ của infrastructure/provider.
+
+Điểm chung của các thành phần trên là **containment**, không phải xóa bỏ variation:
+
+> Core định nghĩa representation chung; provider adapter sở hữu việc chuyển đổi;
+> provider-specific types giữ những capability không thể chuẩn hóa an toàn.
 
 Ranh giới kiến trúc cần ngăn nhóm thứ hai lan vào nhóm thứ nhất.
 

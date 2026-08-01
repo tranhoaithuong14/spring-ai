@@ -466,8 +466,67 @@ Prompt prompt = new Prompt(
 );
 ```
 
-Đặt options trong request khiến toàn bộ invocation trở thành một value graph có
-thể truyền qua advisors, logging/observation context và provider adapter.
+Đặt options trong request khiến `Prompt` trở thành object gốc của một cụm object
+mô tả tương đối đầy đủ model invocation. Cụm object này có thể được truyền qua
+advisors, logging/observation context và provider adapter.
+
+#### “Value graph” nghĩa là gì?
+
+`Value graph` trong ngữ cảnh này là cách gọi **một mạng các object chủ yếu dùng
+để mang dữ liệu, được nối với nhau bằng object references**. Đây không phải tên
+một class hoặc một API chính thức của Spring AI, cũng không phải keyword của
+Java.
+
+Trong ví dụ trên, graph có dạng:
+
+```mermaid
+flowchart TB
+    prompt["Prompt<br/>root object của invocation"]
+    messages["List&lt;Message&gt;<br/>model phải xử lý nội dung gì"]
+    options["ChatOptions<br/>model nên xử lý như thế nào"]
+    message["Message<br/>System / User / Assistant / ToolResponse"]
+    nested[Media / tool data / message metadata]
+
+    prompt --> messages
+    prompt -->|"0..1"| options
+    messages -->|"0..* elements"| message
+    message -->|"0..*"| nested
+```
+
+Gọi là **graph** vì dữ liệu không nằm trong một object phẳng. `Prompt` giữ
+reference đến danh sách `Message` và `ChatOptions`; từng `Message` lại có thể giữ
+media, tool-related data hoặc metadata khác.
+
+Gọi là **value** để nhấn mạnh các object này chủ yếu mô tả giá trị của một lần
+gọi model:
+
+- Conversation nào được gửi đi.
+- Options nào áp dụng cho lần gọi đó.
+- Media hoặc metadata nào đi kèm.
+
+Chúng không phải các service thực thi provider call, không quản lý connection và
+không phải provider client. Tuy nhiên, “value” ở đây là cách mô tả vai trò kiến
+trúc; nó **không khẳng định toàn bộ object graph được Java bảo đảm deep
+immutable**.
+
+Nếu options không nằm trong request, dữ liệu của một invocation có thể bị tách
+thành nhiều tham số song song:
+
+```java
+call(messages, temperature, maxTokens, model, stopSequences, ...);
+```
+
+Khi options nằm trong `Prompt`, các tầng chỉ cần truyền một root object:
+
+```text
+Prompt
+  ├── messages
+  └── options
+```
+
+Vì vậy, câu “truyền cả value graph qua pipeline” có nghĩa đơn giản là:
+
+> Truyền một object gốc cùng toàn bộ các object dữ liệu mà nó tham chiếu, để mỗi tầng nhìn thấy cùng một mô tả nhất quán của model invocation.
 
 </details>
 

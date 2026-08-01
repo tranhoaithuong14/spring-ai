@@ -539,13 +539,155 @@ OpenAI  Anthropic  Ollama
 
 Provider trở thành một quyết định wiring/configuration thay vì lan khắp application code.
 
-### Pattern liên quan
+### 4.1. Vì sao đây là **Dependency Inversion Principle**?
 
-Ta có thể gọi đây là:
+Dependency Inversion Principle (DIP) nói rằng high-level policy không nên phụ
+thuộc trực tiếp vào low-level detail; cả hai nên hướng dependency về abstraction
+ổn định.
 
-- Dependency Inversion.
-- Strategy.
-- Ports and Adapters.
+Nếu không có `ChatModel`, dependency direction là:
+
+```text
+CustomerSupportService ──depends on──> OpenAIClient
+     high-level policy                    low-level detail
+```
+
+`CustomerSupportService` vừa chứa nghiệp vụ customer support, vừa bị khóa vào
+chi tiết hạ tầng OpenAI.
+
+Sau khi đưa `ChatModel` vào giữa:
+
+```java
+class CustomerSupportService {
+    private final ChatModel chatModel;
+}
+
+final class OpenAiChatModel implements ChatModel {
+    private final OpenAIClient openAiClient;
+}
+```
+
+dependency được đảo về abstraction:
+
+```text
+CustomerSupportService ──depends on──> ChatModel
+OpenAiChatModel ──────────implements──> ChatModel
+OpenAiChatModel ──────────delegates───> OpenAIClient
+```
+
+- High-level service chỉ biết capability `ChatModel`.
+- Provider integration phải tuân theo contract `ChatModel`.
+- OpenAI SDK bị đẩy ra sau provider implementation.
+
+Đây được gọi là “inversion” vì application không còn tổ chức dependency quanh
+API mà low-level provider cung cấp. Ngược lại, provider adapter phải thích nghi
+với abstraction mà phần còn lại của hệ thống sử dụng.
+
+Dependency Inversion không đồng nghĩa với Dependency Injection:
+
+- **DIP** quyết định code nên phụ thuộc theo hướng nào.
+- **Dependency Injection** là cơ chế đưa một implementation cụ thể, chẳng hạn
+  `OpenAiChatModel`, vào constructor của `CustomerSupportService`.
+
+Spring DI giúp wiring thiết kế này, nhưng chỉ dùng `@Autowired` hoặc constructor
+injection không tự động làm code tuân theo DIP. Nếu constructor vẫn nhận
+`OpenAIClient`, high-level service vẫn phụ thuộc low-level detail.
+
+### 4.2. Vì sao đây là **Strategy pattern**?
+
+Strategy pattern đóng gói một họ hành vi phía sau cùng một contract để context có
+thể sử dụng hoặc thay thế hành vi mà không biết implementation bên trong.
+
+Các participant trong trường hợp này là:
+
+| Vai trò Strategy | Thành phần trong Spring AI |
+|---|---|
+| `Context` | `CustomerSupportService`, hoặc ở cấp framework là `ChatClient` |
+| `Strategy` | [`ChatModel`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/model/ChatModel.java) |
+| `ConcreteStrategy` | `OpenAiChatModel`, `AnthropicChatModel`, `OllamaChatModel`, `GoogleGenAiChatModel`, ... |
+| Strategy selection | Spring bean configuration, auto-configuration, qualifier hoặc constructor wiring |
+
+Từ góc nhìn của context, hành vi cần thực hiện là:
+
+```java
+ChatResponse response = chatModel.call(prompt);
+```
+
+Context không biết strategy sẽ:
+
+- Tạo OpenAI `ChatCompletionCreateParams`.
+- Tạo Anthropic message request.
+- Gọi local Ollama HTTP API.
+- Chuyển response hoặc streaming events theo cách nào.
+
+Mỗi `ChatModel` implementation cung cấp một chiến lược khác nhau để hoàn thành
+cùng capability “generate a chat response”. Vì vậy có thể thay strategy bằng
+wiring/configuration mà không sửa thuật toán nghiệp vụ trong context.
+
+Ở đây “strategy” không chỉ là một thuật toán tính toán trong memory. Nó là một
+**integration strategy**: lựa chọn provider và cách thực hiện model invocation.
+
+### 4.3. Vì sao đây là **Ports and Adapters**?
+
+Ports and Adapters chia hệ thống thành:
+
+- Phần bên trong mô tả capability nó cần thông qua một **port**.
+- Các **adapter** nối port đó với công nghệ hoặc hệ thống bên ngoài.
+
+Ánh xạ vào Spring AI:
+
+| Vai trò | Thành phần |
+|---|---|
+| Phần sử dụng capability | `CustomerSupportService`, `ChatClient`, advisors và tool infrastructure |
+| Outbound/driven port | `ChatModel` |
+| Provider adapters | `OpenAiChatModel`, `AnthropicChatModel`, `OllamaChatModel`, ... |
+| External systems | OpenAI SDK/API, Anthropic SDK/API, Ollama API, ... |
+
+`ChatModel` là port vì nó mô tả operation mà phía trong cần:
+
+```java
+ChatResponse call(Prompt prompt);
+```
+
+Nó không chứa OpenAI endpoint, Anthropic request DTO hay Ollama response type.
+
+Provider implementation là adapter vì nó dịch hai chiều:
+
+```text
+Spring AI Prompt
+      ↓
+provider-native request
+      ↓
+provider SDK/API
+      ↓
+provider-native response
+      ↓
+Spring AI ChatResponse
+```
+
+Nó được gọi là outbound hoặc driven port vì application chủ động gọi ra một hệ
+thống bên ngoài để yêu cầu model thực hiện công việc.
+
+Trong một application áp dụng Hexagonal Architecture nghiêm ngặt, port thường do
+application sở hữu. Ở đây `ChatModel` được Spring AI cung cấp như một reusable
+integration port. Vì vậy ta nên hiểu đây là **vai trò Ports and Adapters tại ranh
+giới AI provider**, không nên kết luận rằng toàn bộ consuming application tự động
+trở thành một hexagonal architecture.
+
+### Ba góc nhìn khác nhau trên cùng một thiết kế
+
+| Góc nhìn | Câu hỏi nó trả lời |
+|---|---|
+| Dependency Inversion | Dependency nên hướng về abstraction hay provider detail? |
+| Strategy | Làm thế nào thay hành vi gọi model mà context không đổi? |
+| Ports and Adapters | Ranh giới chuyển đổi giữa application model và external provider nằm ở đâu? |
+
+Vì vậy, `OpenAiChatModel` đồng thời có thể là:
+
+- Một `ConcreteStrategy` khi ta nói về khả năng thay provider behavior.
+- Một provider `Adapter` khi ta nói về ranh giới chuyển đổi protocol.
+- Một low-level implementation phụ thuộc vào `ChatModel` abstraction khi ta nói
+  về Dependency Inversion.
 
 Nhưng nguyên nhân sâu hơn pattern là:
 

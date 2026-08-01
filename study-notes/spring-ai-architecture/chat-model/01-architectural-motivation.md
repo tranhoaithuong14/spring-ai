@@ -787,7 +787,121 @@ Nếu contract chỉ là `String → String`, toàn bộ thông tin đó sẽ ph
 
 Khi đó abstraction trở nên vô dụng ngay khi use case vượt quá demo “Hello AI”.
 
-Vì vậy portability phải được xây trên một **canonical data model đủ giàu**, đại khái:
+Vì vậy portability cần một **canonical data model đủ giàu**. Cụm này gồm hai ý
+khác nhau: **canonical** và **đủ giàu**.
+
+### 5.1. **Canonical data model đủ giàu** nghĩa là gì?
+
+#### `Canonical` nghĩa là có một vocabulary chung
+
+Mỗi provider có object model riêng. Ví dụ:
+
+- OpenAI trả `ChatCompletion`, `Choice`, `ChatCompletionMessage` và
+  `CompletionUsage`.
+- Anthropic biểu diễn output bằng message content blocks, stop reason và usage
+  types của Anthropic SDK.
+- Ollama có `OllamaApi.ChatResponse` và message DTO riêng.
+
+Nếu `ChatClient`, advisors, memory, tool infrastructure và application code đều
+phải hiểu từng bộ DTO trên, mọi feature sẽ chứa các nhánh kiểu:
+
+```java
+if (providerIsOpenAi) {
+    // đọc OpenAI Choice
+}
+else if (providerIsAnthropic) {
+    // đọc Anthropic content block
+}
+else if (providerIsOllama) {
+    // đọc Ollama message
+}
+```
+
+`Canonical data model` tạo ra một representation trung gian thống nhất mà phần
+còn lại của Spring AI cùng sử dụng:
+
+- `Prompt` và `Message` cho input.
+- `ChatOptions` cho phần options chung.
+- `ChatResponse` và `Generation` cho output.
+- `AssistantMessage` cho generated content và tool calls.
+- `ChatResponseMetadata`/`ChatGenerationMetadata` cho metadata.
+
+Mỗi provider adapter chỉ cần chuyển đổi giữa native model của provider và model
+chung này:
+
+```mermaid
+flowchart LR
+    openAiDto["OpenAI native DTO"] <--> openAiAdapter["OpenAiChatModel"]
+    anthropicDto["Anthropic native DTO"] <--> anthropicAdapter["AnthropicChatModel"]
+    ollamaDto["Ollama native DTO"] <--> ollamaAdapter["OllamaChatModel"]
+
+    openAiAdapter <--> canonical["Prompt / ChatResponse canonical model"]
+    anthropicAdapter <--> canonical
+    ollamaAdapter <--> canonical
+
+    canonical --> chatClient["ChatClient"]
+    canonical --> advisors["Advisors"]
+    canonical --> tools["Tool infrastructure"]
+    canonical --> application["Application code"]
+```
+
+Có thể hiểu canonical model là **ngôn ngữ chung tại integration boundary**.
+Application không nói bằng ngôn ngữ `ChatCompletion.Choice` của OpenAI hay
+Anthropic content block; nó nói bằng `Prompt`, `Generation` và
+`AssistantMessage`.
+
+`Canonical` không có nghĩa dữ liệu đến từ một database, cũng không có nghĩa đây
+là domain model nghiệp vụ của application. Nó chỉ là object model chung được
+framework chọn để các provider và feature tích hợp với nhau.
+
+#### `Đủ giàu` nghĩa là giữ lại semantic quan trọng
+
+Một canonical model chỉ có:
+
+```java
+String input;
+String output;
+```
+
+vẫn là canonical vì mọi provider có thể map vào nó, nhưng nó quá nghèo để dùng
+cho application thực tế.
+
+“Đủ giàu” nghĩa là model chung phải giữ được những khác biệt **có ý nghĩa đối
+với application**, thay vì flatten tất cả thành text:
+
+| Semantic cần giữ | Spring AI representation |
+|---|---|
+| Ranh giới và role của từng message | `List<Message>`, `SystemMessage`, `UserMessage`, `AssistantMessage`, `ToolResponseMessage` |
+| Text và multimodal content | Message text cùng `Media`/`MediaContent` |
+| Generation controls | `ChatOptions` |
+| Một hoặc nhiều kết quả | `ChatResponse.getResults(): List<Generation>` |
+| Generated text/media | `Generation.getOutput(): AssistantMessage` |
+| Yêu cầu gọi tool | `AssistantMessage.ToolCall` |
+| Token usage, model ID, rate limit | `ChatResponseMetadata` |
+| Finish reason và metadata của từng candidate | `ChatGenerationMetadata` |
+
+Nhờ đó, advisor có thể bổ sung messages, tool infrastructure có thể đọc tool
+calls, observability có thể đọc token usage và application có thể xử lý nhiều
+generation mà không import provider DTO.
+
+#### “Đủ giàu” không có nghĩa chứa mọi field của mọi provider
+
+Nếu canonical model cố chứa hợp của toàn bộ provider fields, nó sẽ trở thành một
+universal DTO khổng lồ và lại bị provider details chi phối.
+
+Spring AI dùng ba nguyên tắc phân ranh giới:
+
+1. Semantic ổn định và phổ biến giữa nhiều provider được đưa vào core model.
+2. Capability riêng được giữ trong provider-specific options hoặc provider
+   module.
+3. Metadata không đủ phổ quát có thể đi qua extension/key-value metadata thay vì
+   trở thành field bắt buộc của mọi response.
+
+Do đó, “đủ giàu” có nghĩa là **đủ để không làm mất những semantic chung mà các
+feature phía trên cần**, chứ không phải đủ để thay thế hoàn toàn mọi native SDK
+type.
+
+Mô hình lớp canonical chính có thể hình dung như sau:
 
 ```mermaid
 classDiagram

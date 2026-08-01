@@ -165,29 +165,44 @@ Một số module tiêu biểu:
 Dependency giữa các module đi theo hướng vào abstraction ổn định:
 
 ```mermaid
-flowchart TD
-    application[Application]
-    chatClient[spring-ai-client-chat]
-    core[spring-ai-model]
-    openAiAuto[spring-ai-autoconfigure-model-openai]
-    openAi[spring-ai-openai]
-    anthropic[spring-ai-anthropic]
-    ollama[spring-ai-ollama]
+classDiagram
+    direction TB
 
-    application --> chatClient
-    application --> openAiAuto
+    class Application {
+        <<application>>
+    }
+    class SpringAiClientChat {
+        <<module>>
+    }
+    class SpringAiModel {
+        <<module>>
+    }
+    class OpenAiAutoConfiguration {
+        <<module>>
+    }
+    class SpringAiOpenAi {
+        <<module>>
+    }
+    class SpringAiAnthropic {
+        <<module>>
+    }
+    class SpringAiOllama {
+        <<module>>
+    }
 
-    chatClient --> core
-    openAiAuto --> openAi
-    openAi --> core
-    anthropic --> core
-    ollama --> core
+    Application ..> SpringAiClientChat : depends on
+    Application ..> OpenAiAutoConfiguration : selects
+    SpringAiClientChat ..> SpringAiModel : depends on
+    OpenAiAutoConfiguration ..> SpringAiOpenAi : configures
+    SpringAiOpenAi ..> SpringAiModel : depends on
+    SpringAiAnthropic ..> SpringAiModel : depends on
+    SpringAiOllama ..> SpringAiModel : depends on
 ```
 
-Mũi tên trong sơ đồ có nghĩa là “module nguồn phụ thuộc vào module đích”. Điểm
-quan trọng là các provider module phụ thuộc vào `spring-ai-model` để implement
-contract chung; `spring-ai-model` không phụ thuộc ngược lại vào OpenAI,
-Anthropic hay Ollama.
+Đường dependency UML `..>` có nghĩa là module nguồn phụ thuộc vào module đích.
+Điểm quan trọng là các provider module phụ thuộc vào `spring-ai-model` để
+implement contract chung; `spring-ai-model` không phụ thuộc ngược lại vào
+OpenAI, Anthropic hay Ollama.
 
 Quy tắc dependency này tạo ra các lợi ích:
 
@@ -422,17 +437,8 @@ Bây giờ chuyển sang Anthropic. Ta không chỉ thay URL và API key. Ta ph�
 - Usage metadata.
 - Error handling.
 
-Vì thế đây không phải bài toán:
-
-```text
-HTTP client A → HTTP client B
-```
-
-Mà là:
-
-```text
-Protocol và data model A → protocol và data model B
-```
+Vì thế đây không chỉ là bài toán đổi `HTTP client A → HTTP client B`. Thực chất,
+framework phải chuyển đổi `protocol và data model A → protocol và data model B`.
 
 Khác biệt có tính **semantic**, không chỉ có tính transport.
 
@@ -525,16 +531,28 @@ Nó không nói:
 
 Nó tạo ra một **stable port**:
 
-```text
-CustomerSupportService
-          │
-          ▼
-       ChatModel
-          ▲
-          │
- ┌────────┼─────────┐
- │        │         │
-OpenAI  Anthropic  Ollama
+```mermaid
+classDiagram
+    direction LR
+
+    class CustomerSupportService
+    class ChatModel {
+        <<interface>>
+    }
+    class OpenAiChatModel {
+        <<adapter>>
+    }
+    class AnthropicChatModel {
+        <<adapter>>
+    }
+    class OllamaChatModel {
+        <<adapter>>
+    }
+
+    CustomerSupportService --> "1" ChatModel : holds
+    ChatModel <|.. OpenAiChatModel : realizes
+    ChatModel <|.. AnthropicChatModel : realizes
+    ChatModel <|.. OllamaChatModel : realizes
 ```
 
 Provider trở thành một quyết định wiring/configuration thay vì lan khắp application code.
@@ -547,9 +565,19 @@ thuộc trực tiếp vào low-level detail; cả hai nên hướng dependency v
 
 Nếu không có `ChatModel`, dependency direction là:
 
-```text
-CustomerSupportService ──depends on──> OpenAIClient
-     high-level policy                    low-level detail
+```mermaid
+classDiagram
+    direction LR
+
+    class CustomerSupportService {
+        <<policy>>
+        -OpenAIClient client
+    }
+    class OpenAIClient {
+        <<detail>>
+    }
+
+    CustomerSupportService --> "1" OpenAIClient : client
 ```
 
 `CustomerSupportService` vừa chứa nghiệp vụ customer support, vừa bị khóa vào
@@ -569,10 +597,28 @@ final class OpenAiChatModel implements ChatModel {
 
 dependency được đảo về abstraction:
 
-```text
-CustomerSupportService ──depends on──> ChatModel
-OpenAiChatModel ──────────implements──> ChatModel
-OpenAiChatModel ──────────delegates───> OpenAIClient
+```mermaid
+classDiagram
+    direction LR
+
+    class CustomerSupportService {
+        <<policy>>
+        -ChatModel chatModel
+    }
+    class ChatModel {
+        <<interface>>
+    }
+    class OpenAiChatModel {
+        <<adapter>>
+        -OpenAIClient openAiClient
+    }
+    class OpenAIClient {
+        <<SDK>>
+    }
+
+    CustomerSupportService --> "1" ChatModel : holds
+    ChatModel <|.. OpenAiChatModel : realizes
+    OpenAiChatModel --> "1" OpenAIClient : delegates
 ```
 
 - High-level service chỉ biết capability `ChatModel`.
@@ -653,16 +699,23 @@ Nó không chứa OpenAI endpoint, Anthropic request DTO hay Ollama response typ
 
 Provider implementation là adapter vì nó dịch hai chiều:
 
-```text
-Spring AI Prompt
-      ↓
-provider-native request
-      ↓
-provider SDK/API
-      ↓
-provider-native response
-      ↓
-Spring AI ChatResponse
+```mermaid
+sequenceDiagram
+    participant Caller as Application / ChatClient
+    participant Adapter as Provider ChatModel adapter
+    participant SDK as Provider SDK
+    participant Provider as Provider API
+
+    Caller->>Adapter: call(Prompt)
+    activate Adapter
+    Adapter->>Adapter: Prompt → native request
+    Adapter->>SDK: invoke(native request)
+    SDK->>Provider: HTTP/provider protocol
+    Provider-->>SDK: native response
+    SDK-->>Adapter: native response DTO
+    Adapter->>Adapter: native response → ChatResponse
+    Adapter-->>Caller: ChatResponse
+    deactivate Adapter
 ```
 
 Nó được gọi là outbound hoặc driven port vì application chủ động gọi ra một hệ
@@ -736,12 +789,25 @@ Khi đó abstraction trở nên vô dụng ngay khi use case vượt quá demo �
 
 Vì vậy portability phải được xây trên một **canonical data model đủ giàu**, đại khái:
 
-```text
-Prompt/conversation
-        ↓
-    ChatModel
-        ↓
-Generations + metadata
+```mermaid
+classDiagram
+    direction LR
+
+    class Prompt
+    class ChatModel {
+        <<interface>>
+        +call(Prompt prompt) ChatResponse
+    }
+    class ChatResponse
+    class Generation
+    class AssistantMessage
+    class ChatResponseMetadata
+
+    ChatModel ..> Prompt : accepts
+    ChatModel ..> ChatResponse : returns
+    ChatResponse *-- "0..*" Generation : results
+    ChatResponse *-- "1" ChatResponseMetadata : metadata
+    Generation *-- "1" AssistantMessage : output
 ```
 
 Ở phần 1, điều quan trọng chưa phải tên các class. Điều quan trọng là quyết định:
@@ -757,11 +823,9 @@ Generations + metadata
 <details>
 <summary><strong>6. Yêu cầu số 3: abstraction chung nhưng không được khóa mất tính năng riêng</strong></summary>
 
-Đây là mâu thuẫn khó nhất:
-
-```text
-Portability ←──────────────→ Provider capabilities
-```
+Đây là mâu thuẫn khó nhất: tăng **portability** thường giới hạn khả năng expose
+**provider-specific capabilities**, còn sử dụng sâu capability riêng sẽ làm giảm
+portability.
 
 Nếu Spring AI chỉ expose những gì mọi provider đều hỗ trợ, API sẽ trở thành “lowest common denominator”.
 
@@ -844,11 +908,9 @@ Nó tổng quát nhưng đánh mất type safety và semantic.
 
 Một cực đoan khác là để mọi loại model hoàn toàn độc lập:
 
-```text
-Chat API       — không liên quan gì
-Embedding API  — không liên quan gì
-Image API      — không liên quan gì
-```
+- Chat API không liên quan đến các model API khác.
+- Embedding API tự định nghĩa toàn bộ request/response pattern.
+- Image API lại tự định nghĩa một pattern khác.
 
 Cách đó sẽ làm mất pattern chung cho:
 
@@ -862,10 +924,30 @@ Cách đó sẽ làm mất pattern chung cho:
 
 Do đó Spring AI cần hai cấp:
 
-```text
-Generic model invocation concepts
-                ↓
-Chat-specific model semantics
+```mermaid
+classDiagram
+    direction TB
+
+    class Model {
+        <<interface>>
+        +call(ModelRequest request) ModelResponse
+    }
+    class StreamingModel {
+        <<interface>>
+        +stream(ModelRequest request) Flux~ModelResponse~
+    }
+    class StreamingChatModel {
+        <<interface>>
+        +stream(Prompt prompt) Flux~ChatResponse~
+    }
+    class ChatModel {
+        <<interface>>
+        +call(Prompt prompt) ChatResponse
+    }
+
+    Model <|-- ChatModel : specializes
+    StreamingModel <|-- StreamingChatModel : specializes
+    StreamingChatModel <|-- ChatModel : extends
 ```
 
 Đây là lý do tài liệu nói Generic Model API được tạo để làm nền tảng cho mọi AI model và để provider mới tuân theo một pattern chung tại [`generic-model.adoc`, dòng 4–6](../../../spring-ai-docs/src/main/antora/modules/ROOT/pages/api/generic-model.adoc).
@@ -881,17 +963,9 @@ Ta chưa phân tích hierarchy ở đây—đó là phần 2. Hiện tại chỉ
 <details>
 <summary><strong>8. Yêu cầu số 5: synchronous và streaming phải cùng một model semantic</strong></summary>
 
-Có hai cách nhận kết quả:
-
-```text
-Request → chờ → response hoàn chỉnh
-```
-
-và:
-
-```text
-Request → chunk → chunk → chunk → hoàn tất
-```
+Có hai cách nhận kết quả: synchronous call chờ một response hoàn chỉnh, còn
+streaming call trả về một publisher và phát các response chunk sau khi có
+subscriber.
 
 Nếu framework thiết kế chúng như hai thế giới không liên quan:
 
@@ -902,11 +976,27 @@ OpenAiStreamingClient
 
 application và các lớp phía trên phải xử lý riêng theo provider.
 
-Spring AI muốn cùng một interaction model:
+Spring AI giữ cùng `Prompt` và `ChatResponse` semantics cho cả hai nhánh:
 
-```text
-Prompt → ChatResponse
-Prompt → stream of ChatResponse
+```mermaid
+sequenceDiagram
+    participant Caller
+    participant Model as ChatModel
+
+    alt Synchronous call
+        Caller->>Model: call(Prompt)
+        activate Model
+        Model-->>Caller: ChatResponse
+        deactivate Model
+    else Streaming call
+        Caller->>Model: stream(Prompt)
+        Model-->>Caller: Flux of ChatResponse
+        Caller->>Model: subscribe()
+        loop Native events are available
+            Model-->>Caller: ChatResponse chunk
+        end
+        Model-->>Caller: onComplete
+    end
 ```
 
 Như vậy:
@@ -974,13 +1064,17 @@ Nếu application gọi trực tiếp từng SDK, mỗi provider cần cách tí
 
 Một contract chung tạo ra điểm bám:
 
-```text
-              retry
-                │
-metrics ─── ChatModel ─── testing
-                │
-          observations
+```mermaid
+flowchart TB
+    retry[Retry policy] --> boundary[ChatModel operation boundary]
+    metrics[Metrics] --> boundary
+    observations[Observations / tracing] --> boundary
+    testing[Mocks / test doubles] --> boundary
 ```
+
+Đây là sơ đồ conceptual attachment points, không phải UML class relationship:
+các concern không nhất thiết đều implement hoặc giữ reference trực tiếp đến
+`ChatModel`.
 
 Điều này không có nghĩa mọi cross-cutting concern đều được implement ngay trong interface. Ý nghĩa là framework có một model-operation boundary thống nhất để áp dụng chúng.
 
@@ -1061,22 +1155,24 @@ Vì vậy:
 <details>
 <summary><strong>13. Tóm lại: chuỗi suy luận dẫn đến <code>ChatModel</code></strong></summary>
 
-```text
-Nhiều provider có API và data model khác nhau
-                    ↓
-Application không nên phụ thuộc trực tiếp vào provider SDK
-                    ↓
-Cần một stable, strongly typed contract
-                    ↓
-Contract phải đủ giàu hơn String → String
-                    ↓
-Phải hỗ trợ common capabilities và provider escape hatches
-                    ↓
-Phải hỗ trợ call và stream
-                    ↓
-Provider implementation chuyển đổi giữa hai thế giới
-                    ↓
-                  ChatModel
+```mermaid
+flowchart TD
+    providerVariance["Nhiều provider có API và data model khác nhau"]
+    avoidSdkCoupling["Application không nên phụ thuộc trực tiếp vào provider SDK"]
+    stableContract["Cần một stable, strongly typed contract"]
+    richContract["Contract phải giàu hơn String → String"]
+    capabilities["Hỗ trợ common capabilities và provider escape hatches"]
+    invocationModes["Hỗ trợ synchronous call và streaming"]
+    adapter["Provider implementation chuyển đổi giữa hai thế giới"]
+    chatModel["ChatModel"]
+
+    providerVariance --> avoidSdkCoupling
+    avoidSdkCoupling --> stableContract
+    stableContract --> richContract
+    richContract --> capabilities
+    capabilities --> invocationModes
+    invocationModes --> adapter
+    adapter --> chatModel
 ```
 
 Luận điểm cốt lõi của phần 1 là:

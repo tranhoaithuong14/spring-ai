@@ -447,16 +447,19 @@ Một abstraction tốt thường được đặt quanh “trục biến động
 
 ### Phần tương đối ổn định trong application
 
-Application muốn làm những việc như:
+Mỗi nhu cầu tương đối ổn định của application được Spring AI ánh xạ vào một số
+abstraction cụ thể:
 
-- Gửi một conversation cho model.
-- Đưa system instructions.
-- Yêu cầu model tạo một hoặc nhiều câu trả lời.
-- Cấu hình temperature, model hoặc giới hạn token.
-- Nhận generated content.
-- Biết model có yêu cầu gọi tool hay không.
-- Đọc token usage và finish reason.
-- Gọi đồng bộ hoặc nhận kết quả dạng stream.
+| Nhu cầu của application | Thành phần Spring AI | Ranh giới trách nhiệm |
+|---|---|---|
+| **Gửi một conversation cho model** | [`Prompt`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/prompt/Prompt.java) chứa `List<Message>`; các message cụ thể thuộc [`chat.messages`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/messages). | `Prompt` biểu diễn toàn bộ messages của **một lần gọi model**. Nó không tự lưu lịch sử giữa các lần gọi. Nếu cần giữ context qua nhiều lượt, [`ChatMemory`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/memory/ChatMemory.java) lưu và truy xuất messages theo `conversationId`, sau đó memory advisor đưa chúng vào request. |
+| **Đưa system instructions** | [`SystemMessage`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/messages/SystemMessage.java) biểu diễn message có `MessageType.SYSTEM`; `Prompt.getSystemMessage()` truy xuất system message. Ở API cấp cao, `ChatClient` cung cấp `system(...)`. | Core model coi system instruction là một loại `Message`; provider adapter chịu trách nhiệm chuyển nó sang format mà provider hỗ trợ. |
+| **Yêu cầu model tạo một hoặc nhiều câu trả lời** | [`ChatResponse`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/model/ChatResponse.java) chứa `List<Generation>`. `getResults()` trả tất cả generations; `getResult()` là convenience method trả generation đầu tiên. | Spring AI chuẩn hóa **response có nhiều candidate**. Tuy nhiên, số lượng candidate cần yêu cầu chưa phải portable option chung: OpenAI dùng `n`, Google dùng `candidateCount`, và không phải provider nào cũng hỗ trợ giống nhau. |
+| **Cấu hình temperature, model hoặc giới hạn token** | [`ChatOptions`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/prompt/ChatOptions.java) định nghĩa các portable options như `model`, `temperature` và `maxTokens`; options được gắn vào `Prompt`. | `ChatOptions` chỉ chứa phần chung. Capability riêng đi qua các type như `OpenAiChatOptions` hoặc `AnthropicChatOptions`, đổi lại application bị giảm portability. |
+| **Nhận generated content** | `ChatModel.call(...)` trả [`ChatResponse`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/model/ChatResponse.java); mỗi [`Generation`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/model/Generation.java) chứa một [`AssistantMessage`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/messages/AssistantMessage.java). | `AssistantMessage` giữ generated text, media và tool calls. `String` chỉ là convenience view; canonical output vẫn là object có cấu trúc. |
+| **Biết model có yêu cầu gọi tool hay không** | `ChatResponse.hasToolCalls()` kiểm tra response; `AssistantMessage.hasToolCalls()` và `getToolCalls()` expose các [`AssistantMessage.ToolCall`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/messages/AssistantMessage.java). | Phát hiện/biểu diễn tool call khác với thực thi tool. [`ToolCallingManager`](../../../spring-ai-model/src/main/java/org/springframework/ai/model/tool/ToolCallingManager.java) và tool-calling advisor điều phối việc resolve và execute tool. |
+| **Đọc token usage và finish reason** | `ChatResponse.getMetadata().getUsage()` trả usage ở cấp response; `Generation.getMetadata().getFinishReason()` trả finish reason ở cấp từng generation. | Usage thuộc toàn bộ model operation, còn finish reason có thể khác giữa các candidate nên nằm trong `ChatGenerationMetadata`. |
+| **Gọi đồng bộ hoặc nhận kết quả dạng stream** | [`ChatModel`](../../../spring-ai-model/src/main/java/org/springframework/ai/chat/model/ChatModel.java) cung cấp `call(Prompt): ChatResponse` và `stream(Prompt): Flux<ChatResponse>`. `ChatClient` expose fluent terminal operations `call()` và `stream()`. | Cả hai cùng dùng `Prompt` và `ChatResponse`; provider adapter chuyển native streaming events thành các Spring AI response chunks. Streaming vẫn là capability: default implementation có thể báo không hỗ trợ. |
 
 Đây là ngôn ngữ của bài toán AI application.
 

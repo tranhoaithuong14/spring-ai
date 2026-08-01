@@ -22,7 +22,7 @@ README của dự án nêu ba nguyên tắc:
   và metadata được biểu diễn bằng Java types thay vì dùng `String`, `Map` hoặc
   JSON không có contract ở mọi nơi.
 
-### `Portability` cụ thể có nghĩa là gì?
+### 1.1. **Portability** cụ thể có nghĩa là gì?
 
 Trong ngữ cảnh Spring AI, `portability` có thể hiểu là **khả năng mang phần lớn
 application code từ provider này sang provider khác mà không phải viết lại phần
@@ -143,7 +143,7 @@ Do đó, cách hiểu chính xác là:
 Phần 12 sẽ phân biệt kỹ hơn ba cấp độ: source portability, wiring portability và
 behavioral portability.
 
-### `Modular design` cụ thể có nghĩa là gì?
+### 1.2. **Modular design** cụ thể có nghĩa là gì?
 
 Trong Spring AI, `modular design` có nghĩa là framework được chia thành các
 **build module có trách nhiệm và dependency boundary rõ ràng**, thay vì đặt API
@@ -209,7 +209,7 @@ auto-configuration tương ứng. Khi chuyển sang Anthropic, phần thay đổ
 là provider dependency, configuration và bean selection. Service phụ thuộc vào
 `ChatModel` không cần biết provider module nào đang được sử dụng.
 
-### Modularity khác portability ở đâu?
+#### Quan hệ giữa **modularity** và **portability**
 
 Hai mục tiêu này bổ trợ nhau nhưng không giống nhau:
 

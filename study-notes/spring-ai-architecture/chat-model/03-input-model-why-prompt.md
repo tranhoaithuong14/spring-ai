@@ -116,13 +116,39 @@ Assistant:
 Tool:
   {"temperature":31,"condition":"sunny"}
 
-Generation settings:
+Per-request chat options (được biểu diễn bằng ChatOptions trong Spring AI):
   model = một model cụ thể
   temperature = 0.2
   maxTokens = 300
 ```
 
 Đây là **một lần gọi model**, nhưng nó chứa nhiều dimension độc lập.
+
+Ở đây cần phân biệt cách gọi khái niệm và tên type trong source:
+
+| Cách gọi | Ý nghĩa |
+|---|---|
+| Generation settings | Cách gọi khái niệm cho những giá trị điều khiển quá trình sinh, chẳng hạn `temperature` và `maxTokens` |
+| `ChatOptions` | Contract cụ thể của Spring AI dùng để mang các option của một chat invocation |
+
+`model`, `temperature` và `maxTokens` trong ví dụ đều được đưa vào một
+`ChatOptions` object. Tuy nhiên, không nên đồng nhất toàn bộ `ChatOptions` với
+“generation settings”, vì `ChatOptions` và các provider-specific subtype còn có
+thể mang những cấu hình rộng hơn như:
+
+- Stop sequences.
+- Tool definitions hoặc tool callbacks.
+- Structured-output configuration.
+- Provider-specific capabilities.
+
+Vì vậy cách nói chính xác trong tài liệu này là:
+
+```text
+ChatOptions
+├── generation settings, ví dụ temperature và maxTokens
+├── model selection
+└── các invocation options khác
+```
 
 ### 2.1 Nội dung không chỉ có một nguồn
 

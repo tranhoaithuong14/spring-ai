@@ -1033,10 +1033,132 @@ classDiagram
 
     ChatModel ..> Prompt : accepts
     ChatModel ..> ChatResponse : returns
-    ChatResponse *-- "0..*" Generation : results
-    ChatResponse *-- "1" ChatResponseMetadata : metadata
-    Generation *-- "1" AssistantMessage : output
+    ChatResponse o-- "0..*" Generation : results
+    ChatResponse o-- "1" ChatResponseMetadata : metadata
+    Generation o-- "1" AssistantMessage : output
 ```
+
+#### Cách đọc class diagram này
+
+Class diagram trên mô tả **cấu trúc object model**, không mô tả thứ tự các method
+được thực thi. Ta nên đọc nó từ trái sang phải như sau:
+
+1. Application tạo một `Prompt` rồi truyền nó vào `ChatModel.call(prompt)`.
+2. `ChatModel` trả về một `ChatResponse`.
+3. Một `ChatResponse` chứa từ `0` đến nhiều `Generation` và đúng một
+   `ChatResponseMetadata`.
+4. Mỗi `Generation` chứa một `AssistantMessage` làm output.
+
+Ý nghĩa cụ thể của từng quan hệ UML:
+
+| Quan hệ trong sơ đồ | Cách đọc | Ý nghĩa trong Spring AI |
+|---|---|---|
+| `ChatModel ..> Prompt : accepts` | `ChatModel` phụ thuộc vào `Prompt` | Method `call(Prompt prompt)` nhận `Prompt` làm input |
+| `ChatModel ..> ChatResponse : returns` | `ChatModel` phụ thuộc vào `ChatResponse` | Method `call(...)` dùng `ChatResponse` làm return type |
+| `ChatResponse o-- "0..*" Generation` | `ChatResponse` tập hợp nhiều `Generation` | Provider có thể trả về không có candidate hoặc nhiều candidate; `getResults()` trả về toàn bộ danh sách |
+| `ChatResponse o-- "1" ChatResponseMetadata` | Mỗi response giữ một metadata object | Metadata mô tả toàn bộ provider call, chẳng hạn model, token usage và rate limit |
+| `Generation o-- "1" AssistantMessage` | Mỗi candidate giữ một output message | `Generation.getOutput()` trả về `AssistantMessage` chứa text, media hoặc tool calls |
+
+Hai ký hiệu cần phân biệt:
+
+- `..>` là **dependency**: class ở đầu mũi tên sử dụng class ở cuối mũi tên
+  trong method signature.
+- `o--` là **aggregation**: object bên trái tập hợp hoặc giữ reference đến object
+  bên phải, nhưng object bên phải vẫn có thể được tạo và tồn tại độc lập.
+
+Sơ đồ dùng aggregation thay vì composition `*--` vì các constructor của
+`ChatResponse` và `Generation` nhận những object được tạo từ bên ngoài. Source
+code không áp đặt rằng `Generation`, `ChatResponseMetadata` hay
+`AssistantMessage` chỉ được thuộc về đúng một owner hoặc phải bị hủy cùng owner.
+
+Số lượng đặt cạnh quan hệ gọi là **multiplicity**:
+
+- `0..*` nghĩa là từ không có phần tử nào đến nhiều phần tử.
+- `1` nghĩa là đúng một object.
+
+#### Luồng chạy thực tế
+
+Để hiểu “nó hoạt động như thế nào”, cần bổ sung một sequence diagram. Ví dụ dưới
+đây dùng `OpenAiChatModel`, nhưng `AnthropicChatModel` cũng đi qua cùng contract
+`ChatModel` và trả về cùng canonical model:
+
+```mermaid
+sequenceDiagram
+    actor Application
+    participant ProviderAdapter as chatModel bean: OpenAiChatModel
+    participant ProviderAPI as OpenAI API
+
+    Note over Application,ProviderAdapter: Biến của application có type ChatModel
+    Application->>ProviderAdapter: call(prompt) qua ChatModel contract
+    ProviderAdapter->>ProviderAdapter: Prompt → OpenAI native request
+    ProviderAdapter->>ProviderAPI: gửi native request
+    ProviderAPI-->>ProviderAdapter: OpenAI native response
+    ProviderAdapter->>ProviderAdapter: native choices → List~Generation~
+    ProviderAdapter->>ProviderAdapter: native usage/model → ChatResponseMetadata
+    ProviderAdapter-->>Application: ChatResponse
+```
+
+Luồng trên gồm bảy bước:
+
+1. **Application chuẩn bị input.** `Prompt` chứa các `Message` của conversation
+   và có thể chứa `ChatOptions` của riêng request đó.
+2. **Application chỉ gọi abstraction.** Biến có type `ChatModel`; application
+   không cần gọi OpenAI SDK trực tiếp.
+3. **Java thực hiện dynamic dispatch.** Nếu Spring đã inject một
+   `OpenAiChatModel`, lời gọi `chatModel.call(prompt)` chạy implementation của
+   `OpenAiChatModel`. Nếu bean được thay bằng `AnthropicChatModel`, call site của
+   application không đổi.
+4. **Provider adapter dịch request.** Implementation đọc messages và options từ
+   `Prompt`, sau đó tạo native request đúng định dạng của provider.
+5. **Provider adapter gọi provider API.** Đây là phần phụ thuộc SDK,
+   authentication, endpoint và wire format của từng provider.
+6. **Provider adapter chuẩn hóa native response.** Mỗi candidate/choice được đổi
+   thành một `Generation`; generated content trở thành `AssistantMessage`; dữ
+   liệu chung của toàn request trở thành `ChatResponseMetadata`.
+7. **Application nhận canonical response.** Nó có thể đọc kết quả mà không biết
+   provider vừa trả về `choices`, content blocks hay một native response format
+   nào khác.
+
+#### Ví dụ đọc kết quả
+
+```java
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.Generation;
+import org.springframework.ai.chat.prompt.Prompt;
+
+Prompt prompt = new Prompt("Giải thích Dependency Inversion");
+
+ChatResponse response = chatModel.call(prompt);
+Generation firstGeneration = response.getResult();
+
+if (firstGeneration != null) {
+    AssistantMessage output = firstGeneration.getOutput();
+
+    String text = output.getText();
+    boolean requestedToolCall = output.hasToolCalls();
+}
+
+int totalTokens = response.getMetadata().getUsage().getTotalTokens();
+```
+
+Trong ví dụ này:
+
+- `response.getResult()` là convenience method lấy `Generation` đầu tiên; nó trả
+  về `null` nếu danh sách kết quả rỗng.
+- `response.getResults()` được dùng khi cần xử lý toàn bộ generations.
+- `generation.getOutput()` trả về `AssistantMessage`, không chỉ một `String`, vì
+  output còn có thể chứa tool calls hoặc media.
+- `response.getMetadata()` là metadata của **toàn provider call**. Ngoài ra, mỗi
+  `Generation` còn có `ChatGenerationMetadata` riêng, chẳng hạn finish reason;
+  chi tiết này được lược khỏi class diagram trên để sơ đồ cơ sở không quá tải.
+
+`ChatModel` còn có convenience method `call(String)`. Source code của method này
+thực hiện đúng chuỗi thao tác vừa mô tả: biến `String` thành `UserMessage`, đặt nó
+vào `Prompt`, gọi `call(Prompt)`, lấy `Generation` đầu tiên rồi trả về text trong
+`AssistantMessage`. Vì vậy `call(String)` chỉ là API rút gọn; `call(Prompt)` mới
+là contract đầy đủ thể hiện thiết kế của framework.
 
 Ở phần 1, điều quan trọng chưa phải tên các class. Điều quan trọng là quyết định:
 

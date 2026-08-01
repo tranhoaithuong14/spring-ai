@@ -246,40 +246,148 @@ Xem [`chatmodel.adoc`, dòng 8–12](../../../spring-ai-docs/src/main/antora/mod
 <details>
 <summary><strong>2. Hãy hình dung Spring AI chưa tồn tại</strong></summary>
 
-Giả sử application gọi trực tiếp OpenAI SDK:
+Giả sử application gọi trực tiếp OpenAI SDK. Ví dụ sau được rút gọn để làm nổi
+bật coupling; phần backoff, logging và tool schema đầy đủ được lược bỏ:
 
 ```java
 class CustomerSupportService {
 
-    private final OpenAIClient openAIClient;
+    // Application phụ thuộc cả synchronous và asynchronous client của OpenAI.
+    private final OpenAIClient openAiClient;
+    private final OpenAIClientAsync openAiClientAsync;
 
-    String answer(String question) {
-        ChatCompletionCreateParams request =
-                ChatCompletionCreateParams.builder()
-                    .model("gpt-...")
-                    .addUserMessage(question)
-                    .temperature(0.2)
-                    .build();
-
-        ChatCompletion response =
-                openAIClient.chat().completions().create(request);
-
-        return response.choices().getFirst().message().content();
+    CustomerSupportService(
+            OpenAIClient openAiClient,
+            OpenAIClientAsync openAiClientAsync) {
+        this.openAiClient = openAiClient;
+        this.openAiClientAsync = openAiClientAsync;
     }
+
+    SupportAnswer answer(String question) {
+        ChatCompletionCreateParams request = createRequest(question);
+        ChatCompletion completion = executeWithRetry(request);
+
+        // Application phải biết response của OpenAI được tổ chức theo choices.
+        ChatCompletion.Choice choice = completion.choices().getFirst();
+        ChatCompletionMessage message = choice.message();
+
+        // Token usage dùng type và field names của OpenAI SDK.
+        CompletionUsage usage = completion.usage().orElseThrow();
+
+        // Tool calls cũng là provider-specific response types.
+        List<ChatCompletionMessageToolCall> toolCalls =
+                message.toolCalls().orElse(List.of());
+
+        return new SupportAnswer(
+                message.content().orElse(""),
+                usage.promptTokens(),
+                usage.completionTokens(),
+                choice.finishReason().value().toString(),
+                toolCalls);
+    }
+
+    private ChatCompletionCreateParams createRequest(String question) {
+        // Tool definition dùng vocabulary và builders của OpenAI SDK.
+        FunctionParameters parameters = FunctionParameters.builder()
+            .putAdditionalProperty("type", JsonValue.from("object"))
+            .build();
+
+        FunctionDefinition function = FunctionDefinition.builder()
+            .name("lookupOrder")
+            .description("Look up the current status of an order")
+            .parameters(parameters)
+            .build();
+
+        ChatCompletionTool tool = ChatCompletionTool.ofFunction(
+                ChatCompletionFunctionTool.builder()
+                    .function(function)
+                    .build());
+
+        // Message roles và generation options là OpenAI request API.
+        return ChatCompletionCreateParams.builder()
+            .model("gpt-...")
+            .addSystemMessage("You are a customer-support assistant")
+            .addUserMessage(question)
+            .temperature(0.2)
+            .maxCompletionTokens(500)
+            .tools(List.of(tool))
+            .build();
+    }
+
+    CompletableFuture<Void> streamAnswer(
+            String question,
+            Consumer<String> onText,
+            Consumer<List<ChatCompletionChunk.Choice.Delta.ToolCall>>
+                    onToolCallChunks) {
+
+        ChatCompletionCreateParams request = createRequest(question);
+
+        // Application phải hiểu streaming subscription và chunk structure
+        // của OpenAI SDK, bao gồm partial text và partial tool calls.
+        return openAiClientAsync.chat()
+            .completions()
+            .createStreaming(request)
+            .subscribe(chunk -> {
+                for (ChatCompletionChunk.Choice choice : chunk.choices()) {
+                    ChatCompletionChunk.Choice.Delta delta = choice.delta();
+                    delta.content().ifPresent(onText);
+                    delta.toolCalls().ifPresent(onToolCallChunks);
+                }
+            })
+            .onCompleteFuture();
+    }
+
+    private ChatCompletion executeWithRetry(
+            ChatCompletionCreateParams request) {
+
+        int attempt = 0;
+        while (true) {
+            // Các subtype khác của OpenAIException không được catch ở đây và
+            // vẫn có thể thoát khỏi method.
+            try {
+                return openAiClient.chat().completions().create(request);
+            }
+            catch (RateLimitException | InternalServerException
+                    | OpenAIRetryableException retryable) {
+                // Application phải biết exception nào của OpenAI có thể retry.
+                // Ví dụ rút gọn này cố ý bỏ qua backoff và jitter.
+                if (++attempt >= 3) {
+                    throw retryable;
+                }
+            }
+        }
+    }
+}
+
+record SupportAnswer(
+        String text,
+        long promptTokens,
+        long completionTokens,
+        String finishReason,
+        List<ChatCompletionMessageToolCall> toolCalls) {
 }
 ```
 
-Class này không chỉ phụ thuộc OpenAI về mặt kết nối. Nó phụ thuộc toàn bộ vocabulary của OpenAI:
+Class này không chỉ phụ thuộc OpenAI về mặt kết nối. Mỗi phần của use case đều
+phụ thuộc vào vocabulary của OpenAI:
 
-- `OpenAIClient`.
-- OpenAI request builder.
-- Tên và kiểu của model options.
-- Cấu trúc `choices`.
-- Cách biểu diễn message.
-- Cách đọc token usage.
-- Cách biểu diễn tool call.
-- Streaming event của OpenAI.
-- Exception và retry semantics của OpenAI.
+- **Client**: `OpenAIClient` và `OpenAIClientAsync`.
+- **Request builder**: `ChatCompletionCreateParams.Builder`.
+- **Messages và options**: `addSystemMessage`, `addUserMessage`, `temperature`
+  và `maxCompletionTokens`.
+- **Response structure**: `ChatCompletion`, `choices`, `Choice` và
+  `ChatCompletionMessage`.
+- **Token usage**: `CompletionUsage`, `promptTokens` và `completionTokens`.
+- **Tool definition và tool call**: `FunctionDefinition`,
+  `ChatCompletionTool` và `ChatCompletionMessageToolCall`.
+- **Streaming protocol**: `OpenAIClientAsync`, `ChatCompletionChunk`, `Choice`
+  và `Delta`; application còn phải tự ghép các partial tool-call chunks.
+- **Exception và retry semantics**: retry policy phải hiểu
+  `RateLimitException`, `InternalServerException`, `OpenAIRetryableException`
+  và các `OpenAIException` khác.
+
+Độ dài của ví dụ không phải do logic nghiệp vụ customer support phức tạp. Phần
+lớn code tồn tại vì application đang tự làm công việc của một provider adapter.
 
 Bây giờ chuyển sang Anthropic. Ta không chỉ thay URL và API key. Ta phải thay:
 
